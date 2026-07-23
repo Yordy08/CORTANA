@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 
 export interface ScrapedPost {
   id: string
@@ -18,7 +19,7 @@ export interface ScrapedPost {
   notified: boolean
 }
 
-const DATA_DIR = join(process.cwd(), 'data')
+const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(process.cwd(), 'data')
 const FACEBOOK_FILE = join(DATA_DIR, 'facebook-posts.json')
 const WEB_FILE = join(DATA_DIR, 'web-posts.json')
 const INSTAGRAM_FILE = join(DATA_DIR, 'instagram-posts.json')

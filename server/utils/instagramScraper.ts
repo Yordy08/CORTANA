@@ -127,7 +127,7 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
           waitUntil: 'domcontentloaded',
           timeout: 30000
         })
-        await detailPage.waitForTimeout(2500)
+        await detailPage.waitForTimeout(1200)
 
         const details = await detailPage.evaluate(String.raw`(() => {
           function cleanText(value) {
@@ -183,8 +183,9 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
     }
 
     const posts: InstagramPost[] = []
-    for (const post of collectedPosts.slice(0, 80)) {
-      posts.push(await getPostDetails(post))
+    const detailCandidates = collectedPosts.slice(0, 24)
+    for (let i = 0; i < detailCandidates.length; i += 4) {
+      posts.push(...await Promise.all(detailCandidates.slice(i, i + 4).map(getPostDetails)))
     }
     await context.close()
 
