@@ -215,6 +215,23 @@ function existsInInstagram(item: MonitorItem) {
   ))
 }
 
+function isFacebookUrl(link = '') {
+  try {
+    const hostname = new URL(link).hostname.toLowerCase()
+    return hostname.includes('facebook.com') || hostname.includes('fb.com')
+  } catch {
+    return false
+  }
+}
+
+function isWebsiteUrl(link = '') {
+  try {
+    return new URL(link).hostname.toLowerCase().includes('burbujapolitica.com')
+  } catch {
+    return false
+  }
+}
+
 async function loadFacebookPosts(silent = false) {
   if (!silent) loading.value = true
 
@@ -601,13 +618,23 @@ function formatDate(isoOrLocale: string | undefined): string {
                   </button>
 
                   <a
-                    v-if="item.link"
+                    v-if="item.link && isFacebookUrl(item.link)"
                     :href="item.link"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent mt-2 transition-colors"
                   >
-                    {{ item.link ? 'Abrir en Facebook →' : '' }}
+                    Abrir en Facebook →
+                  </a>
+
+                  <a
+                    v-else-if="item.link && isWebsiteUrl(item.link)"
+                    :href="item.link"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent mt-2 transition-colors"
+                  >
+                    Ver noticia en web →
                   </a>
                 </div>
               </article>
