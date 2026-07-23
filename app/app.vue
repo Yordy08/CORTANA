@@ -40,8 +40,9 @@ const syncing = ref(false)
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
+let instagramCheckInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
-const INSTAGRAM_REFRESH_MS = 60000
+const INSTAGRAM_REFRESH_MS = 15000
 const lastInstagramFetchAt = ref(0)
 
 onMounted(() => {
@@ -72,10 +73,15 @@ onMounted(() => {
   checkInterval = setInterval(() => {
     refreshAll(true)
   }, AUTO_REFRESH_MS)
+
+  instagramCheckInterval = setInterval(() => {
+    if (activeView.value === 'instagram') loadInstagramPosts(true, true)
+  }, INSTAGRAM_REFRESH_MS)
 })
 
 onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)
+  if (instagramCheckInterval) clearInterval(instagramCheckInterval)
 })
 
 async function refreshActiveView(silent = false) {
@@ -98,7 +104,7 @@ async function refreshAll(silent = false) {
     const tasks = [loadFacebookPosts(true), loadWebsitePosts(true)]
 
     if (activeView.value === 'instagram') {
-      tasks.push(loadInstagramPosts(true))
+      tasks.push(loadInstagramPosts(true, true))
     }
 
     await Promise.all(tasks)
@@ -308,13 +314,13 @@ async function loadWebsitePosts(silent = false) {
   }
 }
 
-async function loadInstagramPosts(silent = false) {
-  if (silent && instagramItems.value.length > 0 && Date.now() - lastInstagramFetchAt.value < INSTAGRAM_REFRESH_MS) return
+async function loadInstagramPosts(silent = false, forceRefresh = false) {
+  if (!forceRefresh && silent && instagramItems.value.length > 0 && Date.now() - lastInstagramFetchAt.value < INSTAGRAM_REFRESH_MS) return
   if (!silent) loading.value = true
 
   try {
     const response = await $fetch<MonitorResponse>('/api/monitor/instagram', {
-      query: { url: INSTAGRAM_URL, refresh: !silent ? '1' : undefined }
+      query: { url: INSTAGRAM_URL, refresh: forceRefresh || !silent ? '1' : undefined }
     })
 
     if (response.items?.length) {

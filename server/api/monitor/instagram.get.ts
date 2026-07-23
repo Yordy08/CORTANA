@@ -106,6 +106,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const profileUrl = String(query.url || '').trim()
   const forceRefresh = query.refresh === '1' || query.refresh === 'true'
+  const hasRemoteBrowser = Boolean(process.env.INSTAGRAM_BROWSER_WS_ENDPOINT || process.env.BROWSERLESS_WS_ENDPOINT)
 
   if (!profileUrl) {
     throw createError({ statusCode: 400, statusMessage: 'Falta el link del perfil de Instagram.' })
@@ -122,7 +123,7 @@ export default defineEventHandler(async (event) => {
 
   const now = Date.now()
 
-  if (cachedResponse?.profileUrl === profileUrl && instagramRateLimitedUntil > now) {
+  if (!(forceRefresh && hasRemoteBrowser) && cachedResponse?.profileUrl === profileUrl && instagramRateLimitedUntil > now) {
     return {
       ...cachedResponse.data,
       message: `Instagram esta limitando Vercel temporalmente. Mostrando cache reciente con ${cachedResponse.data.items.length} publicación(es).`
