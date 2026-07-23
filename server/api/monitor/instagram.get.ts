@@ -21,12 +21,14 @@ type MonitorResponse = {
   message: string
 }
 
-const INSTAGRAM_CACHE_MS = 5 * 60 * 1000
+const INSTAGRAM_CACHE_MS = 60000
+const INSTAGRAM_RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000
 let cachedResponse: {
   profileUrl: string
   expiresAt: number
   data: MonitorResponse
 } | null = null
+let instagramRateLimitedUntil = 0
 
 function cleanInstagramText(text = '') {
   return text.replace(/\s+/g, ' ').trim()
@@ -109,11 +111,23 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Instagram.' })
   }
 
-  if (!forceRefresh && cachedResponse?.profileUrl === profileUrl && cachedResponse.expiresAt > Date.now()) {
+  const now = Date.now()
+
+  if (cachedResponse?.profileUrl === profileUrl && instagramRateLimitedUntil > now) {
+    return {
+      ...cachedResponse.data,
+      message: `Instagram esta limitando Vercel temporalmente. Mostrando cache reciente con ${cachedResponse.data.items.length} publicación(es).`
+    }
+  }
+
+  if (!forceRefresh && cachedResponse?.profileUrl === profileUrl && cachedResponse.expiresAt > now) {
     return cachedResponse.data
   }
 
   const result = await scrapeInstagramProfile(profileUrl)
+  if (result.error?.includes('429')) {
+    instagramRateLimitedUntil = Date.now() + INSTAGRAM_RATE_LIMIT_BACKOFF_MS
+  }
   const cleanedPosts = result.posts.map((post) => ({
     ...post,
     text: cleanInstagramText(post.text) || post.text,
