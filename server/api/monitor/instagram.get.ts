@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { scrapeInstagramProfile } from '../../utils/instagramScraper'
 import { addNewPosts, getStoredPosts } from '../../utils/storage'
+import { instagramFallbackPosts } from '../../utils/instagramFallback'
 
 type DisplayItem = {
   id: string
@@ -19,6 +20,14 @@ type MonitorResponse = {
   totalStored: number
   newDetected: number
   message: string
+}
+
+type InstagramFallbackPost = {
+  text: string
+  image?: string
+  date?: string
+  link: string
+  mediaType?: 'image' | 'video' | 'text'
 }
 
 const INSTAGRAM_CACHE_MS = 60000
@@ -140,11 +149,18 @@ export default defineEventHandler(async (event) => {
   const allPosts = await getStoredPosts('instagram')
 
   const seen = new Set<string>()
-  const sourcePosts = allPosts.length ? allPosts : cleanedPosts.map((post) => ({
+  const fallbackPosts = (instagramFallbackPosts as InstagramFallbackPost[]).map((post) => ({
     ...post,
     id: createDisplayId(post, 0),
     source: 'instagram' as const,
-    detectedAt: new Date().toISOString(),
+    detectedAt: post.date || new Date().toISOString(),
+    notified: false
+  }))
+  const sourcePosts = allPosts.length ? allPosts : (cleanedPosts.length ? cleanedPosts : fallbackPosts).map((post) => ({
+    ...post,
+    id: createDisplayId(post, 0),
+    source: 'instagram' as const,
+    detectedAt: post.date || new Date().toISOString(),
     notified: false
   }))
   const todayPosts = sourcePosts.filter(isInsideTodayWindow)
@@ -178,7 +194,7 @@ export default defineEventHandler(async (event) => {
     totalStored: allPosts.length,
     newDetected: newPosts.length,
     message: result.error
-      ? `Instagram no respondio completamente: ${result.error}. Mostrando ${items.length} publicación(es) disponibles.`
+      ? `Instagram no respondio completamente: ${result.error}. Mostrando ${items.length} publicación(es) disponibles desde respaldo.`
       : newPosts.length > 0
       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en Instagram. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
       : `Mostrando ${items.length} publicación(es) de Instagram de hoy entre 6:00 a. m. y medianoche.`
