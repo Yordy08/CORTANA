@@ -41,6 +41,8 @@ const syncing = ref(false)
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
+const INSTAGRAM_REFRESH_MS = 15 * 60 * 1000
+const lastInstagramFetchAt = ref(0)
 
 onMounted(() => {
   window.addEventListener('beforeinstallprompt', (event) => {
@@ -61,11 +63,12 @@ onMounted(() => {
   if (savedInstagram) {
     instagramItems.value = JSON.parse(savedInstagram)
   }
+  lastInstagramFetchAt.value = Number(sessionStorage.getItem('cortana-instagram-checked-at') || 0)
 
   // Initial load
   refreshAll()
 
-  // Auto-check both sources every minute so the monitor behaves like real time.
+  // Auto-check Facebook and web every minute. Instagram is rate-limited heavily by Meta/Vercel.
   checkInterval = setInterval(() => {
     refreshAll(true)
   }, AUTO_REFRESH_MS)
@@ -92,7 +95,13 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    await Promise.all([loadFacebookPosts(true), loadWebsitePosts(true), loadInstagramPosts(true)])
+    const tasks = [loadFacebookPosts(true), loadWebsitePosts(true)]
+
+    if (activeView.value === 'instagram') {
+      tasks.push(loadInstagramPosts(true))
+    }
+
+    await Promise.all(tasks)
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -300,6 +309,7 @@ async function loadWebsitePosts(silent = false) {
 }
 
 async function loadInstagramPosts(silent = false) {
+  if (silent && instagramItems.value.length > 0 && Date.now() - lastInstagramFetchAt.value < INSTAGRAM_REFRESH_MS) return
   if (!silent) loading.value = true
 
   try {
@@ -311,6 +321,9 @@ async function loadInstagramPosts(silent = false) {
       instagramItems.value = response.items
       cacheItems('instagram', response.items)
     }
+
+    lastInstagramFetchAt.value = Date.now()
+    sessionStorage.setItem('cortana-instagram-checked-at', String(lastInstagramFetchAt.value))
 
     message.value = response.message || ''
 

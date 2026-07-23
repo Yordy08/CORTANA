@@ -13,6 +13,21 @@ type DisplayItem = {
   isNew: boolean
 }
 
+type MonitorResponse = {
+  items: DisplayItem[]
+  source: 'instagram'
+  totalStored: number
+  newDetected: number
+  message: string
+}
+
+const INSTAGRAM_CACHE_MS = 15 * 60 * 1000
+let cachedResponse: {
+  profileUrl: string
+  expiresAt: number
+  data: MonitorResponse
+} | null = null
+
 function cleanInstagramText(text = '') {
   return text.replace(/\s+/g, ' ').trim()
 }
@@ -93,6 +108,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Instagram.' })
   }
 
+  if (cachedResponse?.profileUrl === profileUrl && cachedResponse.expiresAt > Date.now()) {
+    return cachedResponse.data
+  }
+
   const result = await scrapeInstagramProfile(profileUrl)
   const cleanedPosts = result.posts.map((post) => ({
     ...post,
@@ -131,7 +150,14 @@ export default defineEventHandler(async (event) => {
     isNew: newPosts.some((np) => np.id === post.id)
   }))
 
-  return {
+  if (items.length === 0 && result.error && cachedResponse?.profileUrl === profileUrl) {
+    return {
+      ...cachedResponse.data,
+      message: `Instagram esta limitando Vercel: ${result.error}. Mostrando cache reciente con ${cachedResponse.data.items.length} publicación(es).`
+    }
+  }
+
+  const response: MonitorResponse = {
     items,
     source: 'instagram',
     totalStored: allPosts.length,
@@ -142,4 +168,14 @@ export default defineEventHandler(async (event) => {
       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en Instagram. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
       : `Mostrando ${items.length} publicación(es) de Instagram de hoy entre 6:00 a. m. y medianoche.`
   }
+
+  if (items.length > 0) {
+    cachedResponse = {
+      profileUrl,
+      expiresAt: Date.now() + INSTAGRAM_CACHE_MS,
+      data: response
+    }
+  }
+
+  return response
 })
