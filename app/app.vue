@@ -41,7 +41,7 @@ const syncing = ref(false)
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
-const INSTAGRAM_REFRESH_MS = 15 * 60 * 1000
+const INSTAGRAM_REFRESH_MS = 5 * 60 * 1000
 const lastInstagramFetchAt = ref(0)
 
 onMounted(() => {
@@ -314,7 +314,7 @@ async function loadInstagramPosts(silent = false) {
 
   try {
     const response = await $fetch<MonitorResponse>('/api/monitor/instagram', {
-      query: { url: INSTAGRAM_URL }
+      query: { url: INSTAGRAM_URL, refresh: !silent ? '1' : undefined }
     })
 
     if (response.items?.length) {

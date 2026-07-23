@@ -21,7 +21,7 @@ type MonitorResponse = {
   message: string
 }
 
-const INSTAGRAM_CACHE_MS = 15 * 60 * 1000
+const INSTAGRAM_CACHE_MS = 5 * 60 * 1000
 let cachedResponse: {
   profileUrl: string
   expiresAt: number
@@ -94,6 +94,7 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const profileUrl = String(query.url || '').trim()
+  const forceRefresh = query.refresh === '1' || query.refresh === 'true'
 
   if (!profileUrl) {
     throw createError({ statusCode: 400, statusMessage: 'Falta el link del perfil de Instagram.' })
@@ -108,7 +109,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Instagram.' })
   }
 
-  if (cachedResponse?.profileUrl === profileUrl && cachedResponse.expiresAt > Date.now()) {
+  if (!forceRefresh && cachedResponse?.profileUrl === profileUrl && cachedResponse.expiresAt > Date.now()) {
     return cachedResponse.data
   }
 
