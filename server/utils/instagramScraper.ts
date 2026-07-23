@@ -32,6 +32,43 @@ function getInstagramUsername(profileUrl: string) {
   }
 }
 
+function getInstagramHeaders(username: string) {
+  const headers: Record<string, string> = {
+    accept: '*/*',
+    'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
+    referer: `https://www.instagram.com/${username}/`,
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'x-asbd-id': '129477',
+    'x-ig-app-id': '936619743392459',
+    'x-requested-with': 'XMLHttpRequest'
+  }
+
+  const cookie = process.env.INSTAGRAM_COOKIE || process.env.INSTAGRAM_SESSION_COOKIE
+  const sessionId = process.env.INSTAGRAM_SESSIONID || process.env.IG_SESSIONID
+  if (cookie) headers.cookie = cookie
+  if (!cookie && sessionId) headers.cookie = `sessionid=${sessionId}`
+
+  return headers
+}
+
+function parseInstagramPayload(payload: any, username: string): InstagramPost[] {
+  const edges = payload?.data?.user?.edge_owner_to_timeline_media?.edges as InstagramEdge[] | undefined
+
+  return (edges || []).map(({ node }) => {
+    const shortcode = node?.shortcode || ''
+    const caption = node?.edge_media_to_caption?.edges?.[0]?.node?.text?.trim() || '(Publicación sin texto visible)'
+    const timestamp = node?.taken_at_timestamp
+
+    return {
+      text: caption,
+      image: node?.display_url || node?.thumbnail_src,
+      date: timestamp ? new Date(timestamp * 1000).toISOString() : undefined,
+      link: shortcode ? `https://www.instagram.com/p/${shortcode}/` : `https://www.instagram.com/${username}/`,
+      mediaType: node?.is_video ? 'video' : node?.display_url || node?.thumbnail_src ? 'image' : 'text'
+    } satisfies InstagramPost
+  })
+}
+
 async function scrapeInstagramWebApi(profileUrl: string): Promise<{
   posts: InstagramPost[]
   error?: string
@@ -40,42 +77,36 @@ async function scrapeInstagramWebApi(profileUrl: string): Promise<{
   if (!username) return { posts: [], error: 'No se pudo detectar el usuario de Instagram.' }
 
   try {
-    const response = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
-      headers: {
-        accept: '*/*',
-        'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
-        referer: `https://www.instagram.com/${username}/`,
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'x-asbd-id': '129477',
-        'x-ig-app-id': '936619743392459',
-        'x-requested-with': 'XMLHttpRequest'
-      },
-      signal: AbortSignal.timeout(20000)
-    })
+    const endpoints = [
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
+    ]
+    const errors: string[] = []
 
-    if (!response.ok) {
-      return { posts: [], error: `Instagram respondio ${response.status}.` }
+    for (const endpoint of endpoints) {
+      const response = await fetch(endpoint, {
+        headers: getInstagramHeaders(username),
+        signal: AbortSignal.timeout(20000)
+      })
+
+      if (!response.ok) {
+        errors.push(`${new URL(endpoint).hostname}: ${response.status}`)
+        continue
+      }
+
+      const payload = await response.json()
+      const posts = parseInstagramPayload(payload, username)
+
+      if (posts.length > 0) {
+        return { posts }
+      }
+
+      errors.push(`${new URL(endpoint).hostname}: sin publicaciones`)
     }
 
-    const payload = await response.json()
-    const edges = payload?.data?.user?.edge_owner_to_timeline_media?.edges as InstagramEdge[] | undefined
-    const posts = (edges || []).map(({ node }) => {
-      const shortcode = node?.shortcode || ''
-      const caption = node?.edge_media_to_caption?.edges?.[0]?.node?.text?.trim() || '(Publicación sin texto visible)'
-      const timestamp = node?.taken_at_timestamp
-
-      return {
-        text: caption,
-        image: node?.display_url || node?.thumbnail_src,
-        date: timestamp ? new Date(timestamp * 1000).toISOString() : undefined,
-        link: shortcode ? `https://www.instagram.com/p/${shortcode}/` : `https://www.instagram.com/${username}/`,
-        mediaType: node?.is_video ? 'video' : node?.display_url || node?.thumbnail_src ? 'image' : 'text'
-      } satisfies InstagramPost
-    })
-
     return {
-      posts,
-      error: posts.length === 0 ? 'No se encontraron publicaciones en la API web de Instagram.' : undefined
+      posts: [],
+      error: `No se encontraron publicaciones en Instagram. ${errors.join(' | ')}`
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error desconocido al consultar Instagram'

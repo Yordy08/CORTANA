@@ -98,6 +98,7 @@ export default defineEventHandler(async (event) => {
     ...post,
     text: cleanInstagramText(post.text) || post.text,
     link: normalizeInstagramLink(post.link),
+    date: post.date || new Date().toISOString(),
     mediaType: post.mediaType || (post.image ? 'image' : 'text')
   }))
 
@@ -105,7 +106,16 @@ export default defineEventHandler(async (event) => {
   const allPosts = await getStoredPosts('instagram')
 
   const seen = new Set<string>()
-  const items: DisplayItem[] = allPosts.filter(isInsideTodayWindow).filter((post) => {
+  const sourcePosts = allPosts.length ? allPosts : cleanedPosts.map((post) => ({
+    ...post,
+    id: createDisplayId(post, 0),
+    source: 'instagram' as const,
+    detectedAt: new Date().toISOString(),
+    notified: false
+  }))
+  const todayPosts = sourcePosts.filter(isInsideTodayWindow)
+  const postsForDisplay = todayPosts.length ? todayPosts : sourcePosts.slice(0, 24)
+  const items: DisplayItem[] = postsForDisplay.filter((post) => {
     const key = getPublicationKey(post)
     if (!key || seen.has(key)) return false
     seen.add(key)
@@ -126,7 +136,9 @@ export default defineEventHandler(async (event) => {
     source: 'instagram',
     totalStored: allPosts.length,
     newDetected: newPosts.length,
-    message: newPosts.length > 0
+    message: result.error
+      ? `Instagram no respondio completamente: ${result.error}. Mostrando ${items.length} publicación(es) disponibles.`
+      : newPosts.length > 0
       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en Instagram. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
       : `Mostrando ${items.length} publicación(es) de Instagram de hoy entre 6:00 a. m. y medianoche.`
   }
