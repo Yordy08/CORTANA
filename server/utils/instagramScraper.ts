@@ -6,6 +6,83 @@ export interface InstagramPost {
   mediaType?: 'image' | 'video' | 'text'
 }
 
+type InstagramEdge = {
+  node?: {
+    shortcode?: string
+    is_video?: boolean
+    taken_at_timestamp?: number
+    display_url?: string
+    thumbnail_src?: string
+    edge_media_to_caption?: {
+      edges?: Array<{
+        node?: {
+          text?: string
+        }
+      }>
+    }
+  }
+}
+
+function getInstagramUsername(profileUrl: string) {
+  try {
+    const url = new URL(profileUrl)
+    return url.pathname.split('/').filter(Boolean)[0] || ''
+  } catch {
+    return ''
+  }
+}
+
+async function scrapeInstagramWebApi(profileUrl: string): Promise<{
+  posts: InstagramPost[]
+  error?: string
+}> {
+  const username = getInstagramUsername(profileUrl)
+  if (!username) return { posts: [], error: 'No se pudo detectar el usuario de Instagram.' }
+
+  try {
+    const response = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
+      headers: {
+        accept: '*/*',
+        'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
+        referer: `https://www.instagram.com/${username}/`,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'x-asbd-id': '129477',
+        'x-ig-app-id': '936619743392459',
+        'x-requested-with': 'XMLHttpRequest'
+      },
+      signal: AbortSignal.timeout(20000)
+    })
+
+    if (!response.ok) {
+      return { posts: [], error: `Instagram respondio ${response.status}.` }
+    }
+
+    const payload = await response.json()
+    const edges = payload?.data?.user?.edge_owner_to_timeline_media?.edges as InstagramEdge[] | undefined
+    const posts = (edges || []).map(({ node }) => {
+      const shortcode = node?.shortcode || ''
+      const caption = node?.edge_media_to_caption?.edges?.[0]?.node?.text?.trim() || '(Publicación sin texto visible)'
+      const timestamp = node?.taken_at_timestamp
+
+      return {
+        text: caption,
+        image: node?.display_url || node?.thumbnail_src,
+        date: timestamp ? new Date(timestamp * 1000).toISOString() : undefined,
+        link: shortcode ? `https://www.instagram.com/p/${shortcode}/` : `https://www.instagram.com/${username}/`,
+        mediaType: node?.is_video ? 'video' : node?.display_url || node?.thumbnail_src ? 'image' : 'text'
+      } satisfies InstagramPost
+    })
+
+    return {
+      posts,
+      error: posts.length === 0 ? 'No se encontraron publicaciones en la API web de Instagram.' : undefined
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Error desconocido al consultar Instagram'
+    return { posts: [], error: message }
+  }
+}
+
 export async function scrapeInstagramProfile(profileUrl: string): Promise<{
   posts: InstagramPost[]
   error?: string
@@ -14,6 +91,10 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
   const isServerless = Boolean(process.env.VERCEL)
 
   try {
+    if (isServerless) {
+      return await scrapeInstagramWebApi(profileUrl)
+    }
+
     const launchArgs = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -22,26 +103,12 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
       '--window-size=1280,900'
     ]
 
-    if (isServerless) {
-      const [{ chromium: playwrightChromium }, serverlessChromium] = await Promise.all([
-        import('playwright-core'),
-        import('@sparticuz/chromium')
-      ])
-      const chromium = serverlessChromium.default
+    const { chromium } = await import('playwright')
 
-      browser = await playwrightChromium.launch({
-        args: [...chromium.args, ...launchArgs],
-        executablePath: await chromium.executablePath(),
-        headless: chromium.headless
-      })
-    } else {
-      const { chromium } = await import('playwright')
-
-      browser = await chromium.launch({
-        headless: true,
-        args: launchArgs
-      })
-    }
+    browser = await chromium.launch({
+      headless: true,
+      args: launchArgs
+    })
 
     const context = await browser.newContext({
       userAgent:
