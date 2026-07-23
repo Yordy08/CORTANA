@@ -1,5 +1,3 @@
-import { chromium } from 'playwright'
-
 export interface InstagramPost {
   image?: string
   text: string
@@ -13,18 +11,37 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
   error?: string
 }> {
   let browser
+  const isServerless = Boolean(process.env.VERCEL)
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--window-size=1280,900'
-      ]
-    })
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--window-size=1280,900'
+    ]
+
+    if (isServerless) {
+      const [{ chromium: playwrightChromium }, serverlessChromium] = await Promise.all([
+        import('playwright-core'),
+        import('@sparticuz/chromium')
+      ])
+      const chromium = serverlessChromium.default
+
+      browser = await playwrightChromium.launch({
+        args: [...chromium.args, ...launchArgs],
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless
+      })
+    } else {
+      const { chromium } = await import('playwright')
+
+      browser = await chromium.launch({
+        headless: true,
+        args: launchArgs
+      })
+    }
 
     const context = await browser.newContext({
       userAgent:
@@ -60,7 +77,7 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
       await page.getByText(text, { exact: true }).first().click({ timeout: 900 }).catch(() => {})
     }
 
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(isServerless ? 1000 : 5000)
 
     const collectedPosts: InstagramPost[] = []
     const seenPosts = new Set<string>()
@@ -167,7 +184,8 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
     await collectVisiblePosts()
 
     let roundsWithoutNewPosts = 0
-    for (let i = 0; i < 10; i++) {
+    const scrollRounds = isServerless ? 0 : 10
+    for (let i = 0; i < scrollRounds; i++) {
       const beforeCount = collectedPosts.length
       await page.evaluate(() => window.scrollBy(0, Math.round(window.innerHeight * 1.2)))
       await page.waitForTimeout(1500)
@@ -183,9 +201,13 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
     }
 
     const posts: InstagramPost[] = []
-    const detailCandidates = collectedPosts.slice(0, 24)
+    const detailCandidates = collectedPosts.slice(0, isServerless ? 0 : 24)
     for (let i = 0; i < detailCandidates.length; i += 4) {
       posts.push(...await Promise.all(detailCandidates.slice(i, i + 4).map(getPostDetails)))
+    }
+
+    if (isServerless) {
+      posts.push(...collectedPosts.slice(0, 24))
     }
     await context.close()
 

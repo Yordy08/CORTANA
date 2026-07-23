@@ -7,6 +7,10 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss'
   ],
 
+  routeRules: {
+    '/api/monitor/instagram': { maxDuration: 60 }
+  },
+
   app: {
     head: {
       title: 'Cortana Monitor',
