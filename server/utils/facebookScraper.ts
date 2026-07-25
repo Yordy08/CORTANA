@@ -111,6 +111,9 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   if (publicResult.posts.length > 0) return publicResult
 
   let browser
+  let context
+  let page
+  let shouldCloseContext = false
   const isServerless = Boolean(process.env.VERCEL)
   const browserWsEndpoint = process.env.FACEBOOK_BROWSER_WS_ENDPOINT || process.env.BROWSERLESS_WS_ENDPOINT
 
@@ -137,19 +140,31 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
         args: launchArgs
       })
 
-    const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 900 },
-      locale: 'es-CO',
-      timezoneId: 'America/Bogota',
-      // Block unnecessary resources for speed
-      extraHTTPHeaders: {
-        'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8'
+    if (browserWsEndpoint) {
+      context = browser.contexts()[0]
+      if (!context) {
+        context = await browser.newContext({
+          viewport: { width: 1280, height: 900 },
+          locale: 'es-CO',
+          timezoneId: 'America/Bogota'
+        })
+        shouldCloseContext = true
       }
-    })
+    } else {
+      context = await browser.newContext({
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 900 },
+        locale: 'es-CO',
+        timezoneId: 'America/Bogota',
+        extraHTTPHeaders: {
+          'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8'
+        }
+      })
+      shouldCloseContext = true
+    }
 
-    const page = await context.newPage()
+    page = await context.newPage()
 
     // Keep images enabled because they are part of the monitored content.
     await page.route('**/*.{woff,woff2,ttf,eot}', (route) => route.abort())
@@ -346,8 +361,6 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
 
     const posts = collectedPosts.slice(0, 80)
 
-    await context.close()
-
     return {
       posts: posts || [],
       error: posts.length === 0
@@ -358,7 +371,9 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     const message = err instanceof Error ? err.message : 'Error desconocido al acceder a Facebook'
     return { posts: [], error: publicResult.error ? `${publicResult.error} | ${message}` : message }
   } finally {
-    if (browser) await browser.close().catch(() => {})
+    if (page) await page.close().catch(() => {})
+    if (shouldCloseContext && context) await context.close().catch(() => {})
+    if (!browserWsEndpoint && browser) await browser.close().catch(() => {})
   }
 }
 
