@@ -227,7 +227,6 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Falta el link de la página de Facebook.' })
   }
 
-  // Validate URL
   try {
     const url = new URL(pageUrl)
     if (!url.hostname.includes('facebook.com') && !url.hostname.includes('fb.com')) {
@@ -237,10 +236,16 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Facebook.' })
   }
 
-  // Run the Playwright scraper
-  const result = await scrapeFacebookPage(pageUrl)
+  const OVERALL_TIMEOUT = 14000
 
-  // Compare with stored posts and add new ones
+  // Race the scraper against a timeout — if it takes too long, return cached data
+  const result = await Promise.race([
+    scrapeFacebookPage(pageUrl),
+    new Promise<{ posts: []; error: string }>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), OVERALL_TIMEOUT)
+    )
+  ]).catch<{ posts: FacebookPost[]; error?: string }>(() => ({ posts: [], error: 'El scrapeo tomó demasiado tiempo. Se muestran datos guardados.' }))
+
   const cleanedPosts = result.posts.map((post) => ({
     ...post,
     text: cleanFacebookText(post.text) || post.text,
@@ -250,7 +255,6 @@ export default defineEventHandler(async (event) => {
 
   const newPosts = cleanedPosts.length ? await addNewPosts(cleanedPosts, 'facebook') : []
 
-  // Get all stored posts for display
   const allPosts = await getStoredPosts('facebook')
 
   const seen = new Set<string>()
@@ -284,9 +288,9 @@ export default defineEventHandler(async (event) => {
     totalStored: allPosts.length,
     newDetected: newPosts.length,
     message: result.error && newPosts.length === 0
-      ? `Facebook no entrego publicaciones nuevas: ${result.error}. Mostrando ${displayItems.length} publicación(es) guardada(s) o de respaldo.`
+      ? `Facebook: ${result.error}. Mostrando ${displayItems.length} publicación(es) guardada(s).`
       : newPosts.length > 0
-      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s). Mostrando ${displayItems.length} publicaciones de hoy de 6:00 a. m. a medianoche.`
-      : `Mostrando ${displayItems.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
+      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s).`
+      : `Mostrando ${displayItems.length} publicación(es) de hoy.`
   }
 })

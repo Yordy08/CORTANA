@@ -49,6 +49,8 @@ function toMobileUrl(pageUrl: string) {
   }
 }
 
+const SCRAPE_TIMEOUT = 12000
+
 async function scrapeMbasic(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
@@ -63,11 +65,11 @@ async function scrapeMbasic(pageUrl: string): Promise<{
         'user-agent': MOBILE_UA,
         'cache-control': 'no-cache'
       },
-      signal: AbortSignal.timeout(25000)
+      signal: AbortSignal.timeout(SCRAPE_TIMEOUT)
     })
 
     if (!response.ok) {
-      return { posts: [], error: `mbasic.facebook.com: HTTP ${response.status}` }
+      return { posts: [], error: `mbasic: HTTP ${response.status}` }
     }
 
     const html = await response.text()
@@ -120,9 +122,9 @@ async function scrapeMbasic(pageUrl: string): Promise<{
       return { posts: posts.slice(0, 80) }
     }
 
-    return { posts: [], error: 'mbasic.facebook.com: sin publicaciones visibles' }
+    return { posts: [], error: 'mbasic: sin publicaciones' }
   } catch (err) {
-    return { posts: [], error: `mbasic.facebook.com: ${err instanceof Error ? err.message : 'error desconocido'}` }
+    return { posts: [], error: `mbasic: ${err instanceof Error ? err.message : 'error'}` }
   }
 }
 
@@ -140,11 +142,11 @@ async function scrapeMobile(pageUrl: string): Promise<{
         'user-agent': MOBILE_UA,
         'cache-control': 'no-cache'
       },
-      signal: AbortSignal.timeout(20000)
+      signal: AbortSignal.timeout(SCRAPE_TIMEOUT)
     })
 
     if (!response.ok) {
-      return { posts: [], error: `m.facebook.com: HTTP ${response.status}` }
+      return { posts: [], error: `m.facebook: HTTP ${response.status}` }
     }
 
     const $ = cheerio.load(await response.text())
@@ -175,9 +177,9 @@ async function scrapeMobile(pageUrl: string): Promise<{
     })
 
     if (posts.length > 0) return { posts: posts.slice(0, 80) }
-    return { posts: [], error: 'm.facebook.com: sin publicaciones publicas' }
+    return { posts: [], error: 'm.facebook: sin publicaciones' }
   } catch (err) {
-    return { posts: [], error: `m.facebook.com: ${err instanceof Error ? err.message : 'error desconocido'}` }
+    return { posts: [], error: `m.facebook: ${err instanceof Error ? err.message : 'error'}` }
   }
 }
 
@@ -185,17 +187,25 @@ async function scrapePublicFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
 }> {
+  const results = await Promise.allSettled([
+    scrapeMbasic(pageUrl),
+    scrapeMobile(pageUrl)
+  ])
+
+  const firstWithPosts = results.find(
+    (r) => r.status === 'fulfilled' && r.value.posts.length > 0
+  )
+  if (firstWithPosts && firstWithPosts.status === 'fulfilled') {
+    return firstWithPosts.value
+  }
+
   const errors: string[] = []
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.error) errors.push(r.value.error)
+    if (r.status === 'rejected') errors.push(r.reason?.message || 'rejected')
+  }
 
-  const result = await scrapeMbasic(pageUrl)
-  if (result.posts.length > 0) return result
-  if (result.error) errors.push(result.error)
-
-  const result2 = await scrapeMobile(pageUrl)
-  if (result2.posts.length > 0) return result2
-  if (result2.error) errors.push(result2.error)
-
-  return { posts: [], error: errors.join(' | ') }
+  return { posts: [], error: errors.join(' | ') || 'no se pudo scrapear Facebook' }
 }
 
 export async function scrapeFacebookPage(pageUrl: string): Promise<{
@@ -215,7 +225,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   if (isServerless && !browserWsEndpoint) {
     return {
       posts: [],
-      error: `${publicResult.error || 'Facebook no entrego publicaciones publicas.'} | Playwright local desactivado en Vercel.`
+      error: `${publicResult.error || 'Facebook no entrego publicaciones publicas.'}`
     }
   }
 
@@ -263,7 +273,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     page = await context.newPage()
     await page.route('**/*.{woff,woff2,ttf,eot}', (route) => route.abort())
 
-    await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
 
     const dialogButtons = [
       'Permitir todas las cookies', 'Permitir cookies', 'Aceptar todas',
@@ -274,13 +284,13 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       await page.getByText(text, { exact: true }).first().click({ timeout: 900 }).catch(() => {})
     }
 
-    await page.waitForTimeout(3000)
+    await page.waitForTimeout(2000)
 
     const collectedPosts: FacebookPost[] = []
     const seenPosts = new Set<string>()
 
     async function expandVisiblePostText() {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 6; i++) {
         const expanded = await page.evaluate(() => {
           const candidates = Array.from(document.querySelectorAll('[role="button"], span, div'))
             .filter((element) => {
@@ -293,7 +303,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
           return true
         })
         if (!expanded) break
-        await page.waitForTimeout(350)
+        await page.waitForTimeout(300)
       }
     }
 
@@ -408,10 +418,10 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     await collectVisiblePosts()
 
     let roundsWithoutNewPosts = 0
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 4; i++) {
       const beforeCount = collectedPosts.length
       await page.evaluate(() => window.scrollBy(0, Math.round(window.innerHeight * 1.15)))
-      await page.waitForTimeout(1000)
+      await page.waitForTimeout(800)
       await collectVisiblePosts()
 
       if (collectedPosts.length === beforeCount) {
@@ -419,10 +429,10 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       } else {
         roundsWithoutNewPosts = 0
       }
-      if (collectedPosts.length >= 40 || roundsWithoutNewPosts >= 2) break
+      if (collectedPosts.length >= 30 || roundsWithoutNewPosts >= 2) break
     }
 
-    const posts = collectedPosts.slice(0, 80)
+    const posts = collectedPosts.slice(0, 60)
 
     return {
       posts: posts || [],
