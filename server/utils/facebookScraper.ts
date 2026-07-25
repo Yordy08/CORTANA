@@ -9,6 +9,8 @@ export interface FacebookPost {
   mediaType?: 'image' | 'video' | 'text'
 }
 
+const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.147 Mobile Safari/537.36'
+
 function cleanText(value = '') {
   return value
     .replace(/\s+/g, ' ')
@@ -23,86 +25,179 @@ function resolveFacebookUrl(href = '') {
   return ''
 }
 
-function toPublicMobileUrl(pageUrl: string, host: 'mbasic.facebook.com' | 'm.facebook.com') {
-  const url = new URL(pageUrl)
-  url.protocol = 'https:'
-  url.hostname = host
-  url.search = ''
-  url.hash = ''
-  url.searchParams.set('v', 'timeline')
-  return url.toString()
+function toMbasicUrl(pageUrl: string) {
+  try {
+    const url = new URL(pageUrl)
+    const pageId = url.pathname.replace(/\/$/, '').split('/').pop() || ''
+    return `https://mbasic.facebook.com/${pageId}`
+  } catch {
+    return pageUrl
+  }
+}
+
+function toMobileUrl(pageUrl: string) {
+  try {
+    const url = new URL(pageUrl)
+    url.protocol = 'https:'
+    url.hostname = 'm.facebook.com'
+    url.search = ''
+    url.hash = ''
+    url.searchParams.set('v', 'timeline')
+    return url.toString()
+  } catch {
+    return pageUrl
+  }
+}
+
+async function scrapeMbasic(pageUrl: string): Promise<{
+  posts: FacebookPost[]
+  error?: string
+}> {
+  const mbasicUrl = toMbasicUrl(pageUrl)
+
+  try {
+    const response = await fetch(mbasicUrl, {
+      headers: {
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
+        'user-agent': MOBILE_UA,
+        'cache-control': 'no-cache'
+      },
+      signal: AbortSignal.timeout(25000)
+    })
+
+    if (!response.ok) {
+      return { posts: [], error: `mbasic.facebook.com: HTTP ${response.status}` }
+    }
+
+    const html = await response.text()
+    const $ = cheerio.load(html)
+    const posts: FacebookPost[] = []
+    const seen = new Set<string>()
+
+    $('div.story_body, div[role="article"], div[id^="u_"], div.story_body_container').each((_i, el) => {
+      const $el = $(el)
+
+      let link = ''
+      const linkEl = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"]').first()
+      const href = linkEl.attr('href')
+      if (href) link = resolveFacebookUrl(href)
+
+      if (!link) {
+        const allLinks = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="permalink"]')
+        for (const a of allLinks) {
+          const candidate = resolveFacebookUrl($(a).attr('href') || '')
+          if (candidate) { link = candidate; break }
+        }
+      }
+
+      if (!link || seen.has(link)) return
+
+      let text = ''
+      const msgBody = $el.find('.message_body')
+      if (msgBody.length) {
+        text = cleanText(msgBody.text())
+      } else {
+        text = cleanText($el.text())
+      }
+
+      const image = $el.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+      const date = $el.find('abbr, time').first().attr('title')
+        || cleanText($el.find('abbr, time').first().text())
+        || undefined
+
+      const hasVideo = $el.find('video, a[href*="/videos/"], a[href*="/watch/"]').length > 0
+      const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+
+      if (!text && !image) return
+      if (text.length < 10 && !image) return
+
+      seen.add(link)
+      posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+    })
+
+    if (posts.length > 0) {
+      return { posts: posts.slice(0, 80) }
+    }
+
+    return { posts: [], error: 'mbasic.facebook.com: sin publicaciones visibles' }
+  } catch (err) {
+    return { posts: [], error: `mbasic.facebook.com: ${err instanceof Error ? err.message : 'error desconocido'}` }
+  }
+}
+
+async function scrapeMobile(pageUrl: string): Promise<{
+  posts: FacebookPost[]
+  error?: string
+}> {
+  const mobileUrl = toMobileUrl(pageUrl)
+
+  try {
+    const response = await fetch(mobileUrl, {
+      headers: {
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
+        'user-agent': MOBILE_UA,
+        'cache-control': 'no-cache'
+      },
+      signal: AbortSignal.timeout(20000)
+    })
+
+    if (!response.ok) {
+      return { posts: [], error: `m.facebook.com: HTTP ${response.status}` }
+    }
+
+    const $ = cheerio.load(await response.text())
+    const posts: FacebookPost[] = []
+    const seen = new Set<string>()
+
+    $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
+      const link = resolveFacebookUrl($(linkEl).attr('href'))
+      if (!link || link.includes('comment_id=') || seen.has(link)) return
+
+      let container = $(linkEl).parent()
+      for (let i = 0; i < 5 && container.length && cleanText(container.text()).length < 80; i++) {
+        container = container.parent()
+      }
+
+      const text = cleanText(container.text())
+      const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+      const date = container.find('abbr, time').first().attr('title')
+        || cleanText(container.find('abbr, time').first().text())
+        || undefined
+      const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
+      const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+
+      if (!text && !image) return
+
+      seen.add(link)
+      posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+    })
+
+    if (posts.length > 0) return { posts: posts.slice(0, 80) }
+    return { posts: [], error: 'm.facebook.com: sin publicaciones publicas' }
+  } catch (err) {
+    return { posts: [], error: `m.facebook.com: ${err instanceof Error ? err.message : 'error desconocido'}` }
+  }
 }
 
 async function scrapePublicFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
 }> {
-  const urls = [
-    toPublicMobileUrl(pageUrl, 'mbasic.facebook.com'),
-    toPublicMobileUrl(pageUrl, 'm.facebook.com')
-  ]
   const errors: string[] = []
 
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          accept: 'text/html,application/xhtml+xml',
-          'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CortanaMonitor/2.0'
-        },
-        signal: AbortSignal.timeout(20000)
-      })
+  const result = await scrapeMbasic(pageUrl)
+  if (result.posts.length > 0) return result
+  if (result.error) errors.push(result.error)
 
-      if (!response.ok) {
-        errors.push(`${new URL(url).hostname}: ${response.status}`)
-        continue
-      }
-
-      const $ = cheerio.load(await response.text())
-      const posts: FacebookPost[] = []
-      const seen = new Set<string>()
-
-      $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
-        const link = resolveFacebookUrl($(linkEl).attr('href'))
-        if (!link || link.includes('comment_id=') || seen.has(link)) return
-
-        let container = $(linkEl).parent()
-        for (let i = 0; i < 5 && container.length && cleanText(container.text()).length < 80; i++) {
-          container = container.parent()
-        }
-
-        const text = cleanText(container.text())
-        const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
-        const date = container.find('abbr, time').first().attr('title') || cleanText(container.find('abbr, time').first().text()) || undefined
-        const mediaType = link.includes('/videos/') || link.includes('/watch/') ? 'video' : image ? 'image' : 'text'
-
-        if (!text && !image) return
-
-        seen.add(link)
-        posts.push({
-          text: text || '(Publicación sin texto visible)',
-          image,
-          date,
-          link,
-          mediaType
-        })
-      })
-
-      if (posts.length > 0) return { posts: posts.slice(0, 80) }
-      errors.push(`${new URL(url).hostname}: sin publicaciones publicas`)
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : 'Error desconocido al leer Facebook publico')
-    }
-  }
+  const result2 = await scrapeMobile(pageUrl)
+  if (result2.posts.length > 0) return result2
+  if (result2.error) errors.push(result2.error)
 
   return { posts: [], error: errors.join(' | ') }
 }
 
-/**
- * Scrape a public Facebook page using Playwright headless browser.
- * Visits the page, waits for posts to load, and extracts visible post data.
- */
 export async function scrapeFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
@@ -130,21 +225,22 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--window-size=1280,900'
+      '--window-size=480,900'
     ]
 
     browser = browserWsEndpoint
       ? await chromium.connectOverCDP(browserWsEndpoint)
-      : await chromium.launch({
-        headless: true,
-        args: launchArgs
-      })
+      : await chromium.launch({ headless: true, args: launchArgs })
 
     if (browserWsEndpoint) {
       context = browser.contexts()[0]
       if (!context) {
         context = await browser.newContext({
-          viewport: { width: 1280, height: 900 },
+          userAgent: MOBILE_UA,
+          viewport: { width: 480, height: 900 },
+          deviceScaleFactor: 2,
+          isMobile: true,
+          hasTouch: true,
           locale: 'es-CO',
           timezoneId: 'America/Bogota'
         })
@@ -152,48 +248,33 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       }
     } else {
       context = await browser.newContext({
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        viewport: { width: 1280, height: 900 },
+        userAgent: MOBILE_UA,
+        viewport: { width: 480, height: 900 },
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
         locale: 'es-CO',
         timezoneId: 'America/Bogota',
-        extraHTTPHeaders: {
-          'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8'
-        }
+        extraHTTPHeaders: { 'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8' }
       })
       shouldCloseContext = true
     }
 
     page = await context.newPage()
-
-    // Keep images enabled because they are part of the monitored content.
     await page.route('**/*.{woff,woff2,ttf,eot}', (route) => route.abort())
 
-    // Navigate to the Facebook page
-    await page.goto(pageUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
-    })
+    await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
 
     const dialogButtons = [
-      'Permitir todas las cookies',
-      'Permitir cookies',
-      'Aceptar todas',
-      'Aceptar',
-      'Allow all cookies',
-      'Accept all',
-      'Ahora no',
-      'Not now',
-      'Cerrar',
-      'Close'
+      'Permitir todas las cookies', 'Permitir cookies', 'Aceptar todas',
+      'Aceptar', 'Allow all cookies', 'Accept all',
+      'Ahora no', 'Not now', 'Cerrar', 'Close'
     ]
-
     for (const text of dialogButtons) {
       await page.getByText(text, { exact: true }).first().click({ timeout: 900 }).catch(() => {})
     }
 
-    // Wait a bit for JavaScript to render posts
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(3000)
 
     const collectedPosts: FacebookPost[] = []
     const seenPosts = new Set<string>()
@@ -211,7 +292,6 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
           button.click()
           return true
         })
-
         if (!expanded) break
         await page.waitForTimeout(350)
       }
@@ -220,113 +300,99 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     async function collectVisiblePosts() {
       await expandVisiblePostText()
       const posts = await page.evaluate(() => {
-      const results: Array<{ image?: string; text: string; date?: string; link: string; mediaType?: 'image' | 'video' | 'text' }> = []
-      const seen = new Set<string>()
+        const results: Array<{ image?: string; text: string; date?: string; link: string; mediaType?: 'image' | 'video' | 'text' }> = []
+        const seen = new Set<string>()
 
-      function resolveFacebookUrl(href: string) {
-        if (!href) return ''
-        if (href.startsWith('/')) return `https://www.facebook.com${href}`
-        if (href.startsWith('http')) return href
-        return ''
-      }
-
-      function isCommentLink(link: string) {
-        if (!link) return false
-
-        try {
-          const url = new URL(link)
-          return url.searchParams.has('comment_id')
-            || url.searchParams.has('reply_comment_id')
-            || url.pathname.includes('/comments/')
-        } catch {
-          return link.includes('comment_id=') || link.includes('reply_comment_id=') || link.includes('/comments/')
+        function resolveUrl(href: string) {
+          if (!href) return ''
+          if (href.startsWith('/')) return `https://www.facebook.com${href}`
+          if (href.startsWith('http')) return href
+          return ''
         }
-      }
 
-      function looksLikeCommentContainer(element: Element) {
-        if (element.closest('[aria-label*="Comentario"], [aria-label*="Comment"]')) return true
-        const allLinks = Array.from(element.querySelectorAll('a[href]'))
-          .map((a) => resolveFacebookUrl(a.getAttribute('href') || ''))
-          .filter(Boolean)
-        return allLinks.length > 0 && allLinks.every((link) => isCommentLink(link))
-      }
-
-      function pickBestImage(element: Element) {
-        const images = Array.from(element.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]'))
-          .map((img) => ({
-            src: img.getAttribute('src') || '',
-            width: Number(img.getAttribute('width') || 0),
-            height: Number(img.getAttribute('height') || 0),
-            alt: img.getAttribute('alt') || ''
-          }))
-          .filter((img) => img.src && !img.alt.toLowerCase().includes('foto del perfil'))
-          .sort((a, b) => (b.width * b.height) - (a.width * a.height))
-
-        return images[0]?.src || undefined
-      }
-
-      function extractText(element: Element) {
-        const ignored = new Set(['Me gusta', 'Comentar', 'Compartir', 'Enviar', 'Ver más', 'Ver mas', 'Ver menos'])
-        const lines = Array.from(element.querySelectorAll('[dir="auto"]'))
-          .filter((el) => !el.querySelector('[dir="auto"]'))
-          .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
-          .map((text) => text.replace(/Ver menos$/i, '').replace(/Ver más$/i, '').replace(/Ver mas$/i, '').trim())
-          .filter((text) => text.length > 10 && !ignored.has(text))
-        const uniqueLines = Array.from(new Set(lines))
-
-        return uniqueLines.join('\n\n').trim()
-      }
-
-      function extractPost(element: Element) {
-        if (looksLikeCommentContainer(element)) return
-
-        const text = extractText(element)
-        const image = pickBestImage(element)
-        const hasVideo = Boolean(
-          element.querySelector('video, a[href*="/videos/"], a[href*="/watch/"], [aria-label*="Reproducir"], [aria-label*="Play"]')
-        )
-        const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
-        const links = element.querySelectorAll(
-          'a[href*="/posts/"], a[href*="/photo/"], a[href*="/videos/"], a[href*="/watch/"], a[href*="permalink"]'
-        )
-        let link = ''
-        for (const a of links) {
-          const candidateLink = resolveFacebookUrl(a.getAttribute('href') || '')
-          if (isCommentLink(candidateLink)) continue
-          link = candidateLink
-          if (link) break
-        }
-        const timeEl = element.querySelector('time, a[href*="/posts/"] span, a[href*="/videos/"] span, a[href*="/watch/"] span')
-        const date = timeEl?.getAttribute('datetime') || timeEl?.textContent?.trim() || undefined
-        const key = link || text.slice(0, 140)
-
-        if (!key || isCommentLink(link) || seen.has(key) || (!text && !image && !hasVideo)) return
-
-        seen.add(key)
-        results.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
-      }
-
-      // --- Strategy 1: Look for article-like post containers ---
-      // Facebook uses div[role="article"] for post containers
-      const postElements = document.querySelectorAll('div[role="article"]')
-
-      for (const element of postElements) {
-        extractPost(element)
-      }
-
-      // --- Strategy 2: Fallback — look for the main feed areas ---
-      if (results.length === 0) {
-        const feedContainers = document.querySelectorAll(
-          'div[data-pagelet^="Feed"], div[data-pagelet^="Timeline"], [role="feed"]'
-        )
-
-        for (const container of feedContainers) {
-          const blocks = container.querySelectorAll(':scope > div > div > div')
-          for (const block of blocks) {
-            extractPost(block)
+        function isCommentLink(link: string) {
+          if (!link) return false
+          try {
+            const url = new URL(link)
+            return url.searchParams.has('comment_id')
+              || url.searchParams.has('reply_comment_id')
+              || url.pathname.includes('/comments/')
+          } catch {
+            return link.includes('comment_id=') || link.includes('reply_comment_id=') || link.includes('/comments/')
           }
         }
-      }
+
+        function looksLikeComment(element: Element) {
+          if (element.closest('[aria-label*="Comentario"], [aria-label*="Comment"]')) return true
+          const links = Array.from(element.querySelectorAll('a[href]'))
+            .map((a) => resolveUrl(a.getAttribute('href') || ''))
+            .filter(Boolean)
+          return links.length > 0 && links.every((l) => isCommentLink(l))
+        }
+
+        function bestImage(element: Element) {
+          const imgs = Array.from(element.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]'))
+            .map((img) => ({
+              src: img.getAttribute('src') || '',
+              w: Number(img.getAttribute('width') || 0),
+              h: Number(img.getAttribute('height') || 0),
+              alt: img.getAttribute('alt') || ''
+            }))
+            .filter((img) => img.src && !img.alt.toLowerCase().includes('foto del perfil'))
+            .sort((a, b) => (b.w * b.h) - (a.w * a.h))
+          return imgs[0]?.src || undefined
+        }
+
+        function extractText(element: Element) {
+          const ignored = new Set(['Me gusta', 'Comentar', 'Compartir', 'Enviar', 'Ver más', 'Ver mas', 'Ver menos'])
+          const lines = Array.from(element.querySelectorAll('[dir="auto"]'))
+            .filter((el) => !el.querySelector('[dir="auto"]'))
+            .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+            .map((t) => t.replace(/Ver menos$/i, '').replace(/Ver más$/i, '').replace(/Ver mas$/i, '').trim())
+            .filter((t) => t.length > 10 && !ignored.has(t))
+          return Array.from(new Set(lines)).join('\n\n').trim()
+        }
+
+        function extractPost(element: Element) {
+          if (looksLikeComment(element)) return
+
+          const text = extractText(element)
+          const image = bestImage(element)
+          const hasVideo = Boolean(
+            element.querySelector('video, a[href*="/videos/"], a[href*="/watch/"], [aria-label*="Reproducir"], [aria-label*="Play"]')
+          )
+          const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+          const linkEls = element.querySelectorAll(
+            'a[href*="/posts/"], a[href*="/photo/"], a[href*="/videos/"], a[href*="/watch/"], a[href*="permalink"]'
+          )
+          let link = ''
+          for (const a of linkEls) {
+            const candidate = resolveUrl(a.getAttribute('href') || '')
+            if (isCommentLink(candidate)) continue
+            link = candidate
+            if (link) break
+          }
+          const timeEl = element.querySelector('time, a[href*="/posts/"] span, a[href*="/videos/"] span, a[href*="/watch/"] span')
+          const date = timeEl?.getAttribute('datetime') || timeEl?.textContent?.trim() || undefined
+          const key = link || text.slice(0, 140)
+
+          if (!key || isCommentLink(link) || seen.has(key) || (!text && !image && !hasVideo)) return
+
+          seen.add(key)
+          results.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+        }
+
+        const postElements = document.querySelectorAll('div[role="article"]')
+        for (const el of postElements) extractPost(el)
+
+        if (results.length === 0) {
+          const feeds = document.querySelectorAll('div[data-pagelet^="Feed"], div[data-pagelet^="Timeline"], [role="feed"]')
+          for (const feed of feeds) {
+            for (const block of feed.querySelectorAll(':scope > div > div > div')) {
+              extractPost(block)
+            }
+          }
+        }
 
         return results
       })
@@ -342,8 +408,6 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     await collectVisiblePosts()
 
     let roundsWithoutNewPosts = 0
-
-    // Collect after each scroll; Facebook can remove previous posts from DOM while new ones load.
     for (let i = 0; i < 8; i++) {
       const beforeCount = collectedPosts.length
       await page.evaluate(() => window.scrollBy(0, Math.round(window.innerHeight * 1.15)))
@@ -355,7 +419,6 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       } else {
         roundsWithoutNewPosts = 0
       }
-
       if (collectedPosts.length >= 40 || roundsWithoutNewPosts >= 2) break
     }
 
@@ -364,7 +427,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     return {
       posts: posts || [],
       error: posts.length === 0
-        ? publicResult.error || 'No se encontraron publicaciones visibles en la página.'
+        ? publicResult.error || 'No se encontraron publicaciones visibles en la pagina.'
         : undefined
     }
   } catch (err) {
@@ -376,4 +439,3 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     if (!browserWsEndpoint && browser) await browser.close().catch(() => {})
   }
 }
-
