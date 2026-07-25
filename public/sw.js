@@ -1,5 +1,5 @@
-const CACHE_NAME = 'cortana-monitor-v2'
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icon.svg']
+const CACHE_NAME = 'cortana-monitor-v3'
+const APP_SHELL = ['/manifest.webmanifest', '/icon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -26,6 +26,20 @@ self.addEventListener('fetch', (event) => {
 
   // Only handle GET requests
   if (request.method !== 'GET') return
+
+  // Always fetch navigations from the network first so deployments are visible immediately.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+          return response
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+    )
+    return
+  }
 
   // For API requests, try network first, fallback to cache
   if (request.url.includes('/api/')) {
@@ -105,4 +119,3 @@ self.addEventListener('notificationclick', (event) => {
     })
   )
 })
-

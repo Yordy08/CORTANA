@@ -7,6 +7,11 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss'
   ],
 
+  routeRules: {
+    '/': { headers: { 'cache-control': 'no-store' } },
+    '/sw.js': { headers: { 'cache-control': 'no-store, no-cache, must-revalidate' } }
+  },
+
   app: {
     head: {
       title: 'Cortana Monitor',

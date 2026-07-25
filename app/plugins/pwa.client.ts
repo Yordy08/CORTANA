@@ -1,10 +1,20 @@
 export default defineNuxtPlugin(() => {
   // Register service worker
   if ('serviceWorker' in navigator) {
+    let refreshing = false
+
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {
-        // SW registration failed silently
-      })
+      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+        .then((registration) => registration.update())
+        .catch(() => {
+          // SW registration failed silently
+        })
+    })
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return
+      refreshing = true
+      window.location.reload()
     })
   }
 
@@ -36,4 +46,3 @@ export default defineNuxtPlugin(() => {
     })
   }
 })
-
