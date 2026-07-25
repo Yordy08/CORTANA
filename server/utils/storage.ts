@@ -23,25 +23,41 @@ const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(proc
 const FACEBOOK_FILE = join(DATA_DIR, 'facebook-posts.json')
 const WEB_FILE = join(DATA_DIR, 'web-posts.json')
 
+const memCache = new Map<string, ScrapedPost[]>()
+const memCacheTimestamps = new Map<string, number>()
+
 async function ensureDataDir() {
   if (!existsSync(DATA_DIR)) {
     await mkdir(DATA_DIR, { recursive: true })
   }
 }
 
-async function readPosts(filePath: string): Promise<ScrapedPost[]> {
+async function readPosts(filePath: string, cacheKey: string): Promise<ScrapedPost[]> {
+  const cached = memCache.get(cacheKey)
+  if (cached !== undefined) return cached
+
   try {
     if (!existsSync(filePath)) return []
     const raw = await readFile(filePath, 'utf-8')
-    return JSON.parse(raw) as ScrapedPost[]
+    const posts = JSON.parse(raw) as ScrapedPost[]
+    memCache.set(cacheKey, posts)
+    memCacheTimestamps.set(cacheKey, Date.now())
+    return posts
   } catch {
     return []
   }
 }
 
-async function writePosts(filePath: string, posts: ScrapedPost[]) {
+async function writePosts(filePath: string, cacheKey: string, posts: ScrapedPost[]) {
   await ensureDataDir()
-  await writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8')
+  memCache.set(cacheKey, posts)
+  memCacheTimestamps.set(cacheKey, Date.now())
+  try {
+    await writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8')
+  } catch {
+    // In Vercel serverless, /tmp might be read-only for some tiers
+    // In-memory cache still works for warm instances
+  }
 }
 
 function normalizeLink(link = ''): string {
@@ -74,6 +90,10 @@ function getSourceFile(source: Source) {
   return WEB_FILE
 }
 
+function getCacheKey(source: Source) {
+  return source === 'facebook' ? 'fb' : 'web'
+}
+
 function getCandidateKey(candidate: { link?: string; image?: string; text?: string; mediaType?: string }, source: Source) {
   const linkKey = normalizeLink(candidate.link)
   if (source === 'facebook') {
@@ -83,16 +103,10 @@ function getCandidateKey(candidate: { link?: string; image?: string; text?: stri
   return linkKey || candidate.text?.slice(0, 160).toLowerCase() || ''
 }
 
-/**
- * Get all stored posts for a given source
- */
 export async function getStoredPosts(source: Source): Promise<ScrapedPost[]> {
-  return readPosts(getSourceFile(source))
+  return readPosts(getSourceFile(source), getCacheKey(source))
 }
 
-/**
- * Check if a post already exists (by link)
- */
 export async function hasPost(link: string, source: Source): Promise<boolean> {
   if (!link) return false
   const posts = await getStoredPosts(source)
@@ -100,10 +114,6 @@ export async function hasPost(link: string, source: Source): Promise<boolean> {
   return posts.some((p) => normalizeLink(p.link) === normalizedLink)
 }
 
-/**
- * Add new posts that don't exist yet.
- * Returns the list of NEW posts that were added.
- */
 export async function addNewPosts(
   candidates: Array<{
     image?: string
@@ -121,10 +131,8 @@ export async function addNewPosts(
   const newPosts: ScrapedPost[] = []
 
   for (const candidate of candidates) {
-    // Skip if empty text and no image
     if (!candidate.text && !candidate.image && !candidate.link) continue
 
-    // Deduplicate by source-specific identity. Facebook can expose several media entries with the same post link.
     const candidateKey = getCandidateKey(candidate, source)
 
     if (candidateKey) {
@@ -155,11 +163,10 @@ export async function addNewPosts(
           changed = true
         }
 
-        if (changed) await writePosts(getSourceFile(source), posts)
+        if (changed) await writePosts(getSourceFile(source), getCacheKey(source), posts)
         continue
       }
 
-      // Also check among newPosts being added in this batch
       const alreadyAdded = newPosts.some(
         (p) => getCandidateKey(p, source) === candidateKey
       )
@@ -185,15 +192,12 @@ export async function addNewPosts(
   }
 
   if (newPosts.length > 0) {
-    await writePosts(getSourceFile(source), [...newPosts, ...posts])
+    await writePosts(getSourceFile(source), getCacheKey(source), [...newPosts, ...posts])
   }
 
   return newPosts
 }
 
-/**
- * Mark posts as notified
- */
 export async function markNotified(postIds: string[], source: Source) {
   const posts = await getStoredPosts(source)
   let changed = false
@@ -207,7 +211,6 @@ export async function markNotified(postIds: string[], source: Source) {
   }
 
   if (changed) {
-    await writePosts(getSourceFile(source), posts)
+    await writePosts(getSourceFile(source), getCacheKey(source), posts)
   }
 }
-

@@ -10,6 +10,7 @@ export interface FacebookPost {
 }
 
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.147 Mobile Safari/537.36'
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 
 function cleanText(value = '') {
   return value
@@ -25,162 +26,215 @@ function resolveFacebookUrl(href = '') {
   return ''
 }
 
-function toMbasicUrl(pageUrl: string) {
+function getPageId(pageUrl: string): string {
   try {
     const url = new URL(pageUrl)
-    const pageId = url.pathname.replace(/\/$/, '').split('/').pop() || ''
-    return `https://mbasic.facebook.com/${pageId}`
+    return url.pathname.replace(/\/$/, '').split('/').pop() || ''
   } catch {
-    return pageUrl
-  }
-}
-
-function toMobileUrl(pageUrl: string) {
-  try {
-    const url = new URL(pageUrl)
-    url.protocol = 'https:'
-    url.hostname = 'm.facebook.com'
-    url.search = ''
-    url.hash = ''
-    url.searchParams.set('v', 'timeline')
-    return url.toString()
-  } catch {
-    return pageUrl
+    return ''
   }
 }
 
 const SCRAPE_TIMEOUT = 12000
 
-async function scrapeMbasic(pageUrl: string): Promise<{
-  posts: FacebookPost[]
-  error?: string
-}> {
-  const mbasicUrl = toMbasicUrl(pageUrl)
+function isLoginPage($: cheerio.CheerioAPI): boolean {
+  const text = $('body').text().toLowerCase()
+  if (text.includes('inicia sesión') || text.includes('iniciar sesión') || text.includes('login') || text.includes('log in')) return true
+  if ($('form[action*="login"], form[action*="Login"]').length > 0) return true
+  return false
+}
 
+async function fetchAndParse(url: string, userAgent: string, timeout = SCRAPE_TIMEOUT): Promise<{
+  $?: cheerio.CheerioAPI
+  html?: string
+  error?: string
+  status?: number
+}> {
   try {
-    const response = await fetch(mbasicUrl, {
+    const response = await fetch(url, {
       headers: {
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
-        'user-agent': MOBILE_UA,
+        'user-agent': userAgent,
         'cache-control': 'no-cache'
       },
-      signal: AbortSignal.timeout(SCRAPE_TIMEOUT)
+      signal: AbortSignal.timeout(timeout),
+      redirect: 'follow'
     })
 
     if (!response.ok) {
-      return { posts: [], error: `mbasic: HTTP ${response.status}` }
+      return { error: `HTTP ${response.status}`, status: response.status }
     }
 
     const html = await response.text()
     const $ = cheerio.load(html)
-    const posts: FacebookPost[] = []
-    const seen = new Set<string>()
 
-    $('div.story_body, div[role="article"], div[id^="u_"], div.story_body_container').each((_i, el) => {
-      const $el = $(el)
-
-      let link = ''
-      const linkEl = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"]').first()
-      const href = linkEl.attr('href')
-      if (href) link = resolveFacebookUrl(href)
-
-      if (!link) {
-        const allLinks = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="permalink"]')
-        for (const a of allLinks) {
-          const candidate = resolveFacebookUrl($(a).attr('href') || '')
-          if (candidate) { link = candidate; break }
-        }
-      }
-
-      if (!link || seen.has(link)) return
-
-      let text = ''
-      const msgBody = $el.find('.message_body')
-      if (msgBody.length) {
-        text = cleanText(msgBody.text())
-      } else {
-        text = cleanText($el.text())
-      }
-
-      const image = $el.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
-      const date = $el.find('abbr, time').first().attr('title')
-        || cleanText($el.find('abbr, time').first().text())
-        || undefined
-
-      const hasVideo = $el.find('video, a[href*="/videos/"], a[href*="/watch/"]').length > 0
-      const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
-
-      if (!text && !image) return
-      if (text.length < 10 && !image) return
-
-      seen.add(link)
-      posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
-    })
-
-    if (posts.length > 0) {
-      return { posts: posts.slice(0, 80) }
+    if (isLoginPage($)) {
+      return { html }
     }
 
-    return { posts: [], error: 'mbasic: sin publicaciones' }
+    return { $, html }
   } catch (err) {
-    return { posts: [], error: `mbasic: ${err instanceof Error ? err.message : 'error'}` }
+    return { error: err instanceof Error ? err.message : 'error de conexion' }
   }
 }
 
-async function scrapeMobile(pageUrl: string): Promise<{
-  posts: FacebookPost[]
-  error?: string
-}> {
-  const mobileUrl = toMobileUrl(pageUrl)
+function parseMbasicPosts($: cheerio.CheerioAPI): FacebookPost[] {
+  const posts: FacebookPost[] = []
+  const seen = new Set<string>()
 
-  try {
-    const response = await fetch(mobileUrl, {
-      headers: {
-        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
-        'user-agent': MOBILE_UA,
-        'cache-control': 'no-cache'
-      },
-      signal: AbortSignal.timeout(SCRAPE_TIMEOUT)
-    })
+  $('div.story_body, div[role="article"], div[id^="u_"], div.story_body_container, div.messagebody, div.msg').each((_i, el) => {
+    const $el = $(el)
 
-    if (!response.ok) {
-      return { posts: [], error: `m.facebook: HTTP ${response.status}` }
+    let link = ''
+    const linkEl = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"]').first()
+    const href = linkEl.attr('href')
+    if (href) link = resolveFacebookUrl(href)
+
+    if (!link) {
+      const allLinks = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="permalink"], a[href*="photo"]')
+      for (const a of allLinks) {
+        const candidate = resolveFacebookUrl($(a).attr('href') || '')
+        if (candidate) { link = candidate; break }
+      }
     }
 
-    const $ = cheerio.load(await response.text())
-    const posts: FacebookPost[] = []
-    const seen = new Set<string>()
+    if (!link || seen.has(link)) return
 
-    $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
-      const link = resolveFacebookUrl($(linkEl).attr('href'))
-      if (!link || link.includes('comment_id=') || seen.has(link)) return
+    let text = ''
+    const msgBody = $el.find('.message_body')
+    if (msgBody.length) {
+      text = cleanText(msgBody.text())
+    } else {
+      text = cleanText($el.text())
+    }
 
-      let container = $(linkEl).parent()
-      for (let i = 0; i < 5 && container.length && cleanText(container.text()).length < 80; i++) {
-        container = container.parent()
-      }
+    const image = $el.find('img[src*="fbcdn"], img[src*="scontent"], img[src*="fbexternal"]').first().attr('src')
+    const date = $el.find('abbr, time').first().attr('title')
+      || cleanText($el.find('abbr, time').first().text())
+      || undefined
 
-      const text = cleanText(container.text())
-      const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
-      const date = container.find('abbr, time').first().attr('title')
-        || cleanText(container.find('abbr, time').first().text())
-        || undefined
-      const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
-      const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+    const hasVideo = $el.find('video, a[href*="/videos/"], a[href*="/watch/"]').length > 0
+    const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
 
-      if (!text && !image) return
+    if (!text && !image) return
+    if (text.length < 10 && !image) return
 
-      seen.add(link)
-      posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
-    })
+    seen.add(link)
+    posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+  })
 
-    if (posts.length > 0) return { posts: posts.slice(0, 80) }
-    return { posts: [], error: 'm.facebook: sin publicaciones' }
-  } catch (err) {
-    return { posts: [], error: `m.facebook: ${err instanceof Error ? err.message : 'error'}` }
+  return posts
+}
+
+function parseMobilePosts($: cheerio.CheerioAPI): FacebookPost[] {
+  const posts: FacebookPost[] = []
+  const seen = new Set<string>()
+
+  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
+    const link = resolveFacebookUrl($(linkEl).attr('href'))
+    if (!link || link.includes('comment_id=') || seen.has(link)) return
+
+    let container = $(linkEl).parent()
+    for (let i = 0; i < 5 && container.length && cleanText(container.text()).length < 80; i++) {
+      container = container.parent()
+    }
+
+    const text = cleanText(container.text())
+    const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+    const date = container.find('abbr, time').first().attr('title')
+      || cleanText(container.find('abbr, time').first().text())
+      || undefined
+    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
+    const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+
+    if (!text && !image) return
+
+    seen.add(link)
+    posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+  })
+
+  return posts
+}
+
+function parseDesktopPosts($: cheerio.CheerioAPI): FacebookPost[] {
+  const posts: FacebookPost[] = []
+  const seen = new Set<string>()
+
+  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"]').each((_index, linkEl) => {
+    const link = resolveFacebookUrl($(linkEl).attr('href'))
+    if (!link || link.includes('comment_id=') || seen.has(link)) return
+
+    let container = $(linkEl).parent()
+    for (let i = 0; i < 6 && container.length && cleanText(container.text()).length < 100; i++) {
+      container = container.parent()
+    }
+
+    const text = cleanText(container.text())
+    const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+    const date = container.find('abbr, time').first().attr('title')
+      || cleanText(container.find('abbr, time').first().text())
+      || undefined
+    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
+    const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
+
+    if (!text && !image) return
+
+    seen.add(link)
+    posts.push({ text: text || '(Publicación sin texto visible)', image, date, link, mediaType })
+  })
+
+  return posts
+}
+
+async function scrapeMbasic(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
+  const pageId = getPageId(pageUrl)
+  if (!pageId) return { posts: [], error: 'mbasic: no se pudo extraer el ID de la pagina' }
+
+  const urls = [
+    `https://mbasic.facebook.com/${pageId}`,
+    `https://mbasic.facebook.com/${pageId}?_rdr`,
+    `https://mbasic.facebook.com/${pageId}?v=timeline`,
+  ]
+
+  for (const url of urls) {
+    const result = await fetchAndParse(url, MOBILE_UA)
+    if (result.$ && !result.error) {
+      const posts = parseMbasicPosts(result.$)
+      if (posts.length > 0) return { posts: posts.slice(0, 80) }
+    }
   }
+
+  return { posts: [], error: 'mbasic: no se encontraron publicaciones' }
+}
+
+async function scrapeMobile(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
+  const pageId = getPageId(pageUrl)
+  if (!pageId) return { posts: [], error: 'm.facebook: no se pudo extraer el ID de la pagina' }
+
+  const urls = [
+    `https://m.facebook.com/${pageId}`,
+    `https://m.facebook.com/${pageId}?v=timeline`,
+  ]
+
+  for (const url of urls) {
+    const result = await fetchAndParse(url, MOBILE_UA)
+    if (result.$ && !result.error) {
+      const posts = parseMobilePosts(result.$)
+      if (posts.length > 0) return { posts: posts.slice(0, 80) }
+    }
+  }
+
+  return { posts: [], error: 'm.facebook: no se encontraron publicaciones' }
+}
+
+async function scrapeDesktop(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
+  const result = await fetchAndParse(pageUrl, DESKTOP_UA, 15000)
+  if (result.$ && !result.error) {
+    const posts = parseDesktopPosts(result.$)
+    if (posts.length > 0) return { posts: posts.slice(0, 80) }
+  }
+  return { posts: [], error: 'desktop: no se encontraron publicaciones' }
 }
 
 async function scrapePublicFacebookPage(pageUrl: string): Promise<{
@@ -189,7 +243,8 @@ async function scrapePublicFacebookPage(pageUrl: string): Promise<{
 }> {
   const results = await Promise.allSettled([
     scrapeMbasic(pageUrl),
-    scrapeMobile(pageUrl)
+    scrapeMobile(pageUrl),
+    scrapeDesktop(pageUrl)
   ])
 
   const firstWithPosts = results.find(
