@@ -24,7 +24,54 @@ type MonitorResponse = {
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
 
-const activeView = ref<'facebook' | 'web'>('facebook')
+const activeView = ref<'facebook' | 'web' | 'sesion'>('facebook')
+const facebookEmbedUrl = ref('https://m.facebook.com')
+const fbIframe = ref<HTMLIFrameElement | null>(null)
+const sesionIframe = ref<HTMLIFrameElement | null>(null)
+const sesionUrl = ref('https://m.facebook.com/login.php')
+const sesionLoading = ref(false)
+const sesionError = ref('')
+
+function getProxyUrl(originalUrl: string) {
+  return `/api/proxy/facebook?url=${encodeURIComponent(originalUrl)}`
+}
+
+function reloadIframe() {
+  if (fbIframe.value) {
+    const currentSrc = facebookEmbedUrl.value
+    fbIframe.value.src = ''
+    setTimeout(() => {
+      if (fbIframe.value) fbIframe.value.src = currentSrc
+    }, 50)
+  }
+}
+
+function reloadSesionIframe() {
+  if (sesionIframe.value) {
+    sesionLoading.value = true
+    sesionError.value = ''
+    const proxyUrl = getProxyUrl(sesionUrl.value)
+    sesionIframe.value.src = ''
+    setTimeout(() => {
+      if (sesionIframe.value) {
+        sesionIframe.value.src = proxyUrl
+      }
+    }, 50)
+  }
+}
+
+function onSesionIframeLoad() {
+  sesionLoading.value = false
+}
+
+function onSesionIframeError() {
+  sesionLoading.value = false
+  sesionError.value = 'No se pudo cargar la página de inicio de sesión. Verifica tu conexión.'
+}
+
+function openPopup(url: string) {
+  window.open(url, 'FacebookWindow', 'width=650,height=800,scrollbars=yes,resizable=yes')
+}
 const facebookItems = ref<MonitorItem[]>([])
 const websiteItems = ref<MonitorItem[]>([])
 const message = ref('')
@@ -301,7 +348,8 @@ async function loadWebsitePosts(silent = false) {
 
 function getLoadingText() {
   if (activeView.value === 'facebook') return 'Consultando publicaciones de Facebook...'
-  return 'Leyendo publicaciones de la web...'
+  if (activeView.value === 'web') return 'Leyendo publicaciones de la web...'
+  return 'Cargando página de inicio de sesión...'
 }
 
 function triggerNotification(title: string, body: string) {
@@ -472,6 +520,13 @@ function formatDate(isoOrLocale: string | undefined): string {
               >
                 Web
               </button>
+              <button
+                class="glass-tab"
+                :class="{ active: activeView === 'sesion' }"
+                @click="activeView = 'sesion'; sesionLoading = false; sesionError = ''"
+              >
+                Sesión
+              </button>
             </div>
 
             <button
@@ -641,6 +696,90 @@ function formatDate(isoOrLocale: string | undefined): string {
               >
                 Abrir Burbuja Política en la web →
               </a>
+            </div>
+          </template>
+
+          <!-- Sesión View -->
+          <template v-else-if="activeView === 'sesion'">
+            <div class="space-y-5">
+              <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+                <div>
+                  <h3 class="text-lg font-semibold">Iniciar sesión en Facebook</h3>
+                  <p class="text-sm text-muted mt-1">
+                    Usa esta vista para iniciar sesión en tu cuenta de Facebook directamente desde la app.
+                  </p>
+                </div>
+                <button
+                  class="btn-secondary text-sm"
+                  :disabled="sesionLoading"
+                  @click="reloadSesionIframe()"
+                >
+                  {{ sesionLoading ? 'Cargando...' : '↻ Recargar' }}
+                </button>
+              </div>
+
+              <!-- URL input -->
+              <div>
+                <label class="block text-xs font-medium text-muted mb-1.5">URL de Facebook Login</label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="sesionUrl"
+                    class="input-field text-sm flex-1"
+                    placeholder="https://m.facebook.com/login.php"
+                    @keyup.enter="reloadSesionIframe()"
+                  >
+                  <button class="btn-primary text-sm !px-4" @click="reloadSesionIframe()">
+                    Ir
+                  </button>
+                </div>
+              </div>
+
+              <!-- Loading indicator -->
+              <div v-if="sesionLoading" class="loading-spinner">
+                Cargando página de inicio de sesión...
+              </div>
+
+              <!-- Error message -->
+              <div
+                v-if="sesionError && !sesionLoading"
+                class="px-4 py-3 rounded-xl bg-red-500/10 border border-red-400/20 text-sm text-red-300"
+              >
+                {{ sesionError }}
+              </div>
+
+              <!-- Iframe container -->
+              <div
+                class="w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5"
+                :class="{ 'min-h-[500px]': !sesionLoading }"
+              >
+                <iframe
+                  v-show="!sesionLoading"
+                  ref="sesionIframe"
+                  :src="getProxyUrl(sesionUrl)"
+                  class="w-full h-[600px] md:h-[700px] rounded-2xl"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation"
+                  frameborder="0"
+                  allow="camera; microphone; fullscreen"
+                  @load="onSesionIframeLoad"
+                  @error="onSesionIframeError"
+                />
+              </div>
+
+              <!-- Help info -->
+              <div class="px-4 py-3 rounded-xl bg-accent/10 border border-accent/20 text-sm text-accent-light">
+                <p class="font-medium mb-1">💡 Nota:</p>
+                <p>
+                  Esta vista usa un proxy del servidor que elimina las cabeceras que bloquean iframes,
+                  permitiendo que Facebook Login funcione dentro de la app. Si aún tienes problemas,
+                  puedes abrir la página en una ventana emergente.
+                </p>
+                <button
+                  class="btn-primary text-xs !px-3 !py-1.5 mt-3"
+                  @click="openPopup(sesionUrl)"
+                >
+                  Abrir en ventana emergente
+                </button>
+              </div>
             </div>
           </template>
 
