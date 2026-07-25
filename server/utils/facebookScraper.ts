@@ -1,4 +1,5 @@
 import { chromium } from 'playwright'
+import * as cheerio from 'cheerio'
 
 export interface FacebookPost {
   image?: string
@@ -6,6 +7,96 @@ export interface FacebookPost {
   date?: string
   link: string
   mediaType?: 'image' | 'video' | 'text'
+}
+
+function cleanText(value = '') {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/Ver más|Ver mas|Ver menos/gi, '')
+    .trim()
+}
+
+function resolveFacebookUrl(href = '') {
+  if (!href) return ''
+  if (href.startsWith('/')) return `https://www.facebook.com${href}`
+  if (href.startsWith('http')) return href
+  return ''
+}
+
+function toPublicMobileUrl(pageUrl: string, host: 'mbasic.facebook.com' | 'm.facebook.com') {
+  const url = new URL(pageUrl)
+  url.protocol = 'https:'
+  url.hostname = host
+  url.search = ''
+  url.hash = ''
+  url.searchParams.set('v', 'timeline')
+  return url.toString()
+}
+
+async function scrapePublicFacebookPage(pageUrl: string): Promise<{
+  posts: FacebookPost[]
+  error?: string
+}> {
+  const urls = [
+    toPublicMobileUrl(pageUrl, 'mbasic.facebook.com'),
+    toPublicMobileUrl(pageUrl, 'm.facebook.com')
+  ]
+  const errors: string[] = []
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CortanaMonitor/2.0'
+        },
+        signal: AbortSignal.timeout(20000)
+      })
+
+      if (!response.ok) {
+        errors.push(`${new URL(url).hostname}: ${response.status}`)
+        continue
+      }
+
+      const $ = cheerio.load(await response.text())
+      const posts: FacebookPost[] = []
+      const seen = new Set<string>()
+
+      $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
+        const link = resolveFacebookUrl($(linkEl).attr('href'))
+        if (!link || link.includes('comment_id=') || seen.has(link)) return
+
+        let container = $(linkEl).parent()
+        for (let i = 0; i < 5 && container.length && cleanText(container.text()).length < 80; i++) {
+          container = container.parent()
+        }
+
+        const text = cleanText(container.text())
+        const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+        const date = container.find('abbr, time').first().attr('title') || cleanText(container.find('abbr, time').first().text()) || undefined
+        const mediaType = link.includes('/videos/') || link.includes('/watch/') ? 'video' : image ? 'image' : 'text'
+
+        if (!text && !image) return
+
+        seen.add(link)
+        posts.push({
+          text: text || '(Publicación sin texto visible)',
+          image,
+          date,
+          link,
+          mediaType
+        })
+      })
+
+      if (posts.length > 0) return { posts: posts.slice(0, 80) }
+      errors.push(`${new URL(url).hostname}: sin publicaciones publicas`)
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : 'Error desconocido al leer Facebook publico')
+    }
+  }
+
+  return { posts: [], error: errors.join(' | ') }
 }
 
 /**
@@ -16,6 +107,9 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
 }> {
+  const publicResult = await scrapePublicFacebookPage(pageUrl)
+  if (publicResult.posts.length > 0) return publicResult
+
   let browser
 
   try {
@@ -243,11 +337,13 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
 
     return {
       posts: posts || [],
-      error: posts.length === 0 ? 'No se encontraron publicaciones visibles en la página.' : undefined
+      error: posts.length === 0
+        ? publicResult.error || 'No se encontraron publicaciones visibles en la página.'
+        : undefined
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error desconocido al acceder a Facebook'
-    return { posts: [], error: message }
+    return { posts: [], error: publicResult.error ? `${publicResult.error} | ${message}` : message }
   } finally {
     if (browser) await browser.close().catch(() => {})
   }

@@ -33,7 +33,7 @@ function getInstagramUsername(profileUrl: string) {
 }
 
 function getInstagramHeaders(username: string) {
-  const headers: Record<string, string> = {
+  return {
     accept: '*/*',
     'accept-language': 'es-CO,es;q=0.9,en;q=0.8',
     referer: `https://www.instagram.com/${username}/`,
@@ -42,13 +42,6 @@ function getInstagramHeaders(username: string) {
     'x-ig-app-id': '936619743392459',
     'x-requested-with': 'XMLHttpRequest'
   }
-
-  const cookie = process.env.INSTAGRAM_COOKIE || process.env.INSTAGRAM_SESSION_COOKIE
-  const sessionId = process.env.INSTAGRAM_SESSIONID || process.env.IG_SESSIONID
-  if (cookie) headers.cookie = cookie
-  if (!cookie && sessionId) headers.cookie = `sessionid=${sessionId}`
-
-  return headers
 }
 
 function parseInstagramPayload(payload: any, username: string): InstagramPost[] {
@@ -119,14 +112,12 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
   error?: string
 }> {
   let browser
-  const isServerless = Boolean(process.env.VERCEL)
   const browserWsEndpoint = process.env.INSTAGRAM_BROWSER_WS_ENDPOINT || process.env.BROWSERLESS_WS_ENDPOINT
 
-  try {
-    if (isServerless && !browserWsEndpoint) {
-      return await scrapeInstagramWebApi(profileUrl)
-    }
+  const publicApiResult = await scrapeInstagramWebApi(profileUrl)
+  if (publicApiResult.posts.length > 0) return publicApiResult
 
+  try {
     const launchArgs = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -310,11 +301,13 @@ export async function scrapeInstagramProfile(profileUrl: string): Promise<{
 
     return {
       posts,
-      error: posts.length === 0 ? 'No se encontraron publicaciones visibles en Instagram.' : undefined
+      error: posts.length === 0
+        ? publicApiResult.error || 'No se encontraron publicaciones visibles en Instagram.'
+        : undefined
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error desconocido al acceder a Instagram'
-    return { posts: [], error: message }
+    return { posts: [], error: publicApiResult.error ? `${publicApiResult.error} | ${message}` : message }
   } finally {
     if (browser) await browser.close().catch(() => {})
   }
