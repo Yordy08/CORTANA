@@ -61,6 +61,18 @@ const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null
 const suggestField = ref('category')
 const suggestValue = ref('')
 
+const CATEGORIES = [
+  'Ambiente',
+  'Boletines',
+  'Crónicas',
+  'Ojo a los medios',
+  'Opinión',
+  'Política Córdoba',
+  'Política Internacional',
+  'Política Nación',
+  'Política Región',
+]
+
 function correctionsFor(itemId: string) {
   return corrections.value.filter((c) => c.postId === itemId && c.status === 'pending')
 }
@@ -640,12 +652,6 @@ function formatDate(isoOrLocale: string | undefined): string {
                       Ver noticia en web →
                     </a>
 
-                    <button
-                      class="ml-auto inline-flex items-center gap-1 text-xs text-muted hover:text-white transition-colors"
-                      @click="openSuggest(item, 'facebook')"
-                    >
-                      ✏️
-                    </button>
                   </div>
                 </div>
               </article>
@@ -731,10 +737,10 @@ function formatDate(isoOrLocale: string | undefined): string {
                     </button>
 
                     <button
-                      class="ml-auto inline-flex items-center gap-1 text-xs text-muted hover:text-white transition-colors"
+                      class="ml-auto btn-secondary text-xs !px-3 !py-1"
                       @click="openSuggest(item, 'web')"
                     >
-                      ✏️
+                      Corrigeme
                     </button>
                   </div>
                 </div>
@@ -780,12 +786,22 @@ function formatDate(isoOrLocale: string | undefined): string {
                 <option value="title">Título</option>
               </select>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-muted mb-1.5">Valor sugerido</label>
+            <div v-if="suggestField === 'category'">
+              <label class="block text-xs font-medium text-muted mb-1.5">Nueva categoría</label>
+              <select
+                v-model="suggestValue"
+                class="input-field text-sm !text-white !bg-white/20" style="color-scheme: dark"
+              >
+                <option value="" disabled selected>Seleccionar categoría...</option>
+                <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
+              </select>
+            </div>
+            <div v-else>
+              <label class="block text-xs font-medium text-muted mb-1.5">Nuevo título</label>
               <input
                 v-model="suggestValue"
                 class="input-field text-sm"
-                :placeholder="'Ej: Política, Deportes...'"
+                placeholder="Escribe el nuevo título..."
                 @keyup.enter="submitSuggestion"
               >
             </div>

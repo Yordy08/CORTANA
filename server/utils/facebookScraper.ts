@@ -35,7 +35,8 @@ function getPageId(pageUrl: string): string {
   }
 }
 
-const SCRAPE_TIMEOUT = 12000
+const SCRAPE_TIMEOUT = 5000
+const DESKTOP_TIMEOUT = 6000
 
 function isLoginPage($: cheerio.CheerioAPI): boolean {
   const text = $('body').text().toLowerCase()
@@ -187,76 +188,46 @@ function parseDesktopPosts($: cheerio.CheerioAPI): FacebookPost[] {
   return posts
 }
 
-async function scrapeMbasic(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
-  const pageId = getPageId(pageUrl)
-  if (!pageId) return { posts: [], error: 'mbasic: no se pudo extraer el ID de la pagina' }
-
-  const urls = [
-    `https://mbasic.facebook.com/${pageId}`,
-    `https://mbasic.facebook.com/${pageId}?_rdr`,
-    `https://mbasic.facebook.com/${pageId}?v=timeline`,
-  ]
-
-  for (const url of urls) {
-    const result = await fetchAndParse(url, MOBILE_UA)
-    if (result.$ && !result.error) {
-      const posts = parseMbasicPosts(result.$)
-      if (posts.length > 0) return { posts: posts.slice(0, 80) }
-    }
-  }
-
-  return { posts: [], error: 'mbasic: no se encontraron publicaciones' }
-}
-
-async function scrapeMobile(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
-  const pageId = getPageId(pageUrl)
-  if (!pageId) return { posts: [], error: 'm.facebook: no se pudo extraer el ID de la pagina' }
-
-  const urls = [
-    `https://m.facebook.com/${pageId}`,
-    `https://m.facebook.com/${pageId}?v=timeline`,
-  ]
-
-  for (const url of urls) {
-    const result = await fetchAndParse(url, MOBILE_UA)
-    if (result.$ && !result.error) {
-      const posts = parseMobilePosts(result.$)
-      if (posts.length > 0) return { posts: posts.slice(0, 80) }
-    }
-  }
-
-  return { posts: [], error: 'm.facebook: no se encontraron publicaciones' }
-}
-
-async function scrapeDesktop(pageUrl: string): Promise<{ posts: FacebookPost[]; error?: string }> {
-  const result = await fetchAndParse(pageUrl, DESKTOP_UA, 15000)
-  if (result.$ && !result.error) {
-    const posts = parseDesktopPosts(result.$)
-    if (posts.length > 0) return { posts: posts.slice(0, 80) }
-  }
-  return { posts: [], error: 'desktop: no se encontraron publicaciones' }
-}
-
 async function scrapePublicFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
 }> {
-  const results = await Promise.allSettled([
-    scrapeMbasic(pageUrl),
-    scrapeMobile(pageUrl),
-    scrapeDesktop(pageUrl)
-  ])
+  const pageId = getPageId(pageUrl)
+  if (!pageId) return { posts: [], error: 'no se pudo extraer el ID de la pagina' }
 
-  const firstWithPosts = results.find(
-    (r) => r.status === 'fulfilled' && r.value.posts.length > 0
+  const attempts: Array<{ url: string; ua: string; parser: ($: cheerio.CheerioAPI) => FacebookPost[]; timeout: number }> = [
+    // mbasic variants (mobile UA)
+    { url: `https://mbasic.facebook.com/${pageId}`, ua: MOBILE_UA, parser: parseMbasicPosts, timeout: SCRAPE_TIMEOUT },
+    { url: `https://mbasic.facebook.com/${pageId}?_rdr`, ua: MOBILE_UA, parser: parseMbasicPosts, timeout: SCRAPE_TIMEOUT },
+    { url: `https://mbasic.facebook.com/${pageId}?v=timeline`, ua: MOBILE_UA, parser: parseMbasicPosts, timeout: SCRAPE_TIMEOUT },
+    // m.facebook variants (mobile UA)
+    { url: `https://m.facebook.com/${pageId}`, ua: MOBILE_UA, parser: parseMobilePosts, timeout: SCRAPE_TIMEOUT },
+    { url: `https://m.facebook.com/${pageId}?v=timeline`, ua: MOBILE_UA, parser: parseMobilePosts, timeout: SCRAPE_TIMEOUT },
+    // desktop (desktop UA)
+    { url: pageUrl, ua: DESKTOP_UA, parser: parseDesktopPosts, timeout: DESKTOP_TIMEOUT },
+  ]
+
+  const results = await Promise.allSettled(
+    attempts.map((a) =>
+      fetchAndParse(a.url, a.ua, a.timeout).then((res) => {
+        if (res.$ && !res.error) {
+          const posts = a.parser(res.$)
+          if (posts.length > 0) return posts.slice(0, 80)
+        }
+        return null
+      })
+    )
   )
-  if (firstWithPosts && firstWithPosts.status === 'fulfilled') {
-    return firstWithPosts.value
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value && r.value.length > 0) {
+      return { posts: r.value }
+    }
   }
 
   const errors: string[] = []
   for (const r of results) {
-    if (r.status === 'fulfilled' && r.value.error) errors.push(r.value.error)
+    if (r.status === 'fulfilled' && r.value === null) errors.push('sin posts')
     if (r.status === 'rejected') errors.push(r.reason?.message || 'rejected')
   }
 

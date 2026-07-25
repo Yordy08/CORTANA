@@ -236,7 +236,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Facebook.' })
   }
 
-  const OVERALL_TIMEOUT = 25000
+  const OVERALL_TIMEOUT = 10000
 
   // Race the scraper against a timeout — if it takes too long, return cached data
   const result = await Promise.race([
