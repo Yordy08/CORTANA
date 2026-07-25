@@ -23,12 +23,10 @@ type MonitorResponse = {
 
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
-const INSTAGRAM_URL = 'https://www.instagram.com/burbujapolitica?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw=='
 
-const activeView = ref<'facebook' | 'web' | 'instagram'>('facebook')
+const activeView = ref<'facebook' | 'web'>('facebook')
 const facebookItems = ref<MonitorItem[]>([])
 const websiteItems = ref<MonitorItem[]>([])
-const instagramItems = ref<MonitorItem[]>([])
 const message = ref('')
 const loading = ref(false)
 const installPrompt = ref<Event | null>(null)
@@ -40,10 +38,7 @@ const syncing = ref(false)
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
-let instagramCheckInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
-const INSTAGRAM_REFRESH_MS = 15000
-const lastInstagramFetchAt = ref(0)
 
 onMounted(() => {
   window.addEventListener('beforeinstallprompt', (event) => {
@@ -60,37 +55,25 @@ onMounted(() => {
   if (savedWeb) {
     websiteItems.value = JSON.parse(savedWeb)
   }
-  const savedInstagram = sessionStorage.getItem('cortana-instagram-items')
-  if (savedInstagram) {
-    instagramItems.value = JSON.parse(savedInstagram)
-  }
-  lastInstagramFetchAt.value = Number(sessionStorage.getItem('cortana-instagram-checked-at') || 0)
 
   // Initial load
   refreshAll()
 
-  // Auto-check Facebook and web every minute. Instagram is rate-limited heavily by Meta/Vercel.
+  // Auto-check Facebook and web every minute.
   checkInterval = setInterval(() => {
     refreshAll(true)
   }, AUTO_REFRESH_MS)
-
-  instagramCheckInterval = setInterval(() => {
-    if (activeView.value === 'instagram') loadInstagramPosts(true, true)
-  }, INSTAGRAM_REFRESH_MS)
 })
 
 onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)
-  if (instagramCheckInterval) clearInterval(instagramCheckInterval)
 })
 
 async function refreshActiveView(silent = false) {
   if (activeView.value === 'facebook') {
     await loadFacebookPosts(silent)
-  } else if (activeView.value === 'web') {
-    await loadWebsitePosts(silent)
   } else {
-    await loadInstagramPosts(silent)
+    await loadWebsitePosts(silent)
   }
 }
 
@@ -101,13 +84,7 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    const tasks = [loadFacebookPosts(true), loadWebsitePosts(true)]
-
-    if (activeView.value === 'instagram') {
-      tasks.push(loadInstagramPosts(true, true))
-    }
-
-    await Promise.all(tasks)
+    await Promise.all([loadFacebookPosts(true), loadWebsitePosts(true)])
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -169,20 +146,6 @@ function hasSharedPhrase(aWords: string[], bWords: string[]) {
   return Array.from(getWordChunks(bWords, chunkSize)).some((chunk) => aChunks.has(chunk))
 }
 
-function isInstagramMatchByWebLead(webItem: MonitorItem, instagramItem: MonitorItem) {
-  const leadText = normalizePublicationText(webItem.leadText || '')
-  const instagramText = normalizePublicationText(`${instagramItem.context} ${instagramItem.fullText || ''}`)
-
-  if (!leadText || !instagramText) return false
-  if (leadText.length >= 60 && instagramText.includes(leadText.slice(0, 140))) return true
-
-  const leadWords = uniqueWords(getComparableWords(leadText))
-  const instagramWords = uniqueWords(getComparableWords(instagramText))
-  const sharedWords = countSharedWords(leadWords, instagramWords)
-
-  return leadWords.length >= 8 && sharedWords / leadWords.length >= 0.72
-}
-
 function isSamePublication(a: MonitorItem, b: MonitorItem) {
   const aText = getItemComparableText(a)
   const bText = getItemComparableText(b)
@@ -219,15 +182,6 @@ function existsInWeb(item: MonitorItem) {
 
 function existsInFacebook(item: MonitorItem) {
   return facebookItems.value.some((facebookItem) => isSamePublication(item, facebookItem))
-}
-
-function existsInInstagram(item: MonitorItem) {
-  if (instagramItems.value.some((instagramItem) => isSamePublication(item, instagramItem))) return true
-
-  const relatedWebItems = websiteItems.value.filter((webItem) => isSamePublication(item, webItem))
-  return relatedWebItems.some((webItem) => (
-    instagramItems.value.some((instagramItem) => isInstagramMatchByWebLead(webItem, instagramItem) || isSamePublication(webItem, instagramItem))
-  ))
 }
 
 function isFacebookUrl(link = '') {
@@ -314,47 +268,9 @@ async function loadWebsitePosts(silent = false) {
   }
 }
 
-async function loadInstagramPosts(silent = false, forceRefresh = false) {
-  if (!forceRefresh && silent && instagramItems.value.length > 0 && Date.now() - lastInstagramFetchAt.value < INSTAGRAM_REFRESH_MS) return
-  if (!silent) loading.value = true
-
-  try {
-    const response = await $fetch<MonitorResponse>('/api/monitor/instagram', {
-      query: { url: INSTAGRAM_URL, refresh: forceRefresh || !silent ? '1' : undefined }
-    })
-
-    if (response.items?.length) {
-      instagramItems.value = response.items
-      cacheItems('instagram', response.items)
-    }
-
-    lastInstagramFetchAt.value = Date.now()
-    sessionStorage.setItem('cortana-instagram-checked-at', String(lastInstagramFetchAt.value))
-
-    message.value = response.message || ''
-
-    if (response.newDetected && response.newDetected > 0) {
-      newCount.value = response.newDetected
-      showNewBadge.value = true
-      triggerNotification(
-        'Nuevas publicaciones en Instagram',
-        `${response.newDetected} nueva(s) publicación(es) en Burbuja Política.`
-      )
-      setTimeout(() => { showNewBadge.value = false }, 5000)
-    }
-
-    lastCheckedAt.value = new Date().toLocaleTimeString('es-CO')
-  } catch {
-    if (!silent) message.value = 'No se pudieron obtener las publicaciones de Instagram.'
-  } finally {
-    if (!silent) loading.value = false
-  }
-}
-
 function getLoadingText() {
   if (activeView.value === 'facebook') return 'Consultando publicaciones de Facebook...'
-  if (activeView.value === 'web') return 'Leyendo publicaciones de la web...'
-  return 'Consultando publicaciones de Instagram...'
+  return 'Leyendo publicaciones de la web...'
 }
 
 function triggerNotification(title: string, body: string) {
@@ -460,8 +376,8 @@ function formatDate(isoOrLocale: string | undefined): string {
                 Cortana Monitor
               </h1>
               <p class="text-muted max-w-xl">
-                Monitorea automáticamente <strong class="text-white">Burbuja de Córdoba</strong> en Facebook,
-                <strong class="text-white">Burbuja Política</strong> en la web e Instagram. Te notifica cuando hay nuevas publicaciones.
+                Monitorea automáticamente <strong class="text-white">Burbuja de Córdoba</strong> en Facebook y
+                <strong class="text-white">Burbuja Política</strong> en la web. Te notifica cuando hay nuevas publicaciones.
               </p>
             </div>
             <button
@@ -494,7 +410,7 @@ function formatDate(isoOrLocale: string | undefined): string {
 
         <!-- URL Panel -->
         <div class="glass-card p-5 md:p-6 mb-6">
-          <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
             <div>
               <label class="block text-xs font-medium text-muted mb-1.5">Facebook monitoreado</label>
               <input
@@ -507,14 +423,6 @@ function formatDate(isoOrLocale: string | undefined): string {
               <label class="block text-xs font-medium text-muted mb-1.5">Web monitoreada</label>
               <input
                 :value="WEBSITE_URL"
-                class="input-field text-sm"
-                readonly
-              >
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-muted mb-1.5">Instagram monitoreado</label>
-              <input
-                :value="INSTAGRAM_URL"
                 class="input-field text-sm"
                 readonly
               >
@@ -547,13 +455,6 @@ function formatDate(isoOrLocale: string | undefined): string {
                 @click="activeView = 'web'; refreshActiveView(true)"
               >
                 Web
-              </button>
-              <button
-                class="glass-tab"
-                :class="{ active: activeView === 'instagram' }"
-                @click="activeView = 'instagram'; refreshActiveView(true)"
-              >
-                Instagram
               </button>
             </div>
 
@@ -620,7 +521,6 @@ function formatDate(isoOrLocale: string | undefined): string {
                   <div class="source-buttons">
                     <span class="source-pill source-pill-ok">Facebook</span>
                     <span class="source-pill" :class="existsInWeb(item) ? 'source-pill-ok' : 'source-pill-missing'">WEB</span>
-                    <span class="source-pill" :class="existsInInstagram(item) ? 'source-pill-ok' : 'source-pill-missing'">Instagram</span>
                   </div>
 
                   <p class="text-xs text-muted-dark">
@@ -703,7 +603,6 @@ function formatDate(isoOrLocale: string | undefined): string {
                   <div class="source-buttons">
                     <span class="source-pill source-pill-ok">WEB</span>
                     <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-missing'">Facebook</span>
-                    <span class="source-pill" :class="existsInInstagram(item) ? 'source-pill-ok' : 'source-pill-missing'">Instagram</span>
                   </div>
 
                   <span v-if="item.category && !item.image" class="category-pill">{{ item.category }}</span>
@@ -737,91 +636,11 @@ function formatDate(isoOrLocale: string | undefined): string {
             </div>
           </template>
 
-          <!-- Instagram Posts -->
-          <template v-else>
-            <div v-if="instagramItems.length === 0" class="py-12 text-center text-muted">
-              <p class="text-lg mb-2">No hay publicaciones aún</p>
-              <p class="text-sm text-muted-dark">Presiona "Revisar" para consultar Instagram.</p>
-            </div>
-
-            <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <article
-                v-for="item in instagramItems"
-                :key="item.id"
-                class="post-card"
-                :class="{ 'post-card-video': item.mediaType === 'video' }"
-              >
-                <div v-if="item.isNew" class="relative">
-                  <span class="badge-new absolute top-3 left-3 z-10">NUEVO</span>
-                </div>
-
-                <div v-if="item.image" class="relative">
-                  <img
-                    class="post-image"
-                    :class="{ 'video-media': item.mediaType === 'video' }"
-                    :src="item.image"
-                    :alt="item.mediaType === 'video' ? 'Miniatura de video en Instagram' : 'Imagen de publicación en Instagram'"
-                    loading="lazy"
-                  >
-                  <div v-if="item.mediaType === 'video'" class="video-overlay">
-                    <span class="video-badge">VIDEO</span>
-                  </div>
-                </div>
-
-                <div v-else-if="item.mediaType === 'video'" class="video-placeholder">
-                  <span class="video-badge">VIDEO</span>
-                  <span class="text-xs text-white/60">Publicación con video</span>
-                </div>
-
-                <div class="p-4 space-y-2">
-                  <div class="source-buttons">
-                    <span class="source-pill source-pill-ok">Instagram</span>
-                    <span class="source-pill" :class="existsInWeb(item) ? 'source-pill-ok' : 'source-pill-missing'">WEB</span>
-                    <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-missing'">Facebook</span>
-                  </div>
-
-                  <p class="text-xs text-muted-dark">
-                    {{ formatDate(item.createdAt) || 'Publicación reciente' }}
-                  </p>
-                  <p class="whitespace-pre-line text-sm leading-relaxed">{{ item.context }}</p>
-
-                  <button
-                    class="btn-secondary text-xs !px-3 !py-1.5 mt-2"
-                    type="button"
-                    @click="copyPostText(item)"
-                  >
-                    {{ copiedTextId === item.id ? 'Texto copiado' : 'Copiar texto' }}
-                  </button>
-
-                  <a
-                    v-if="item.link"
-                    :href="item.link"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent mt-2 transition-colors"
-                  >
-                    Abrir en Instagram →
-                  </a>
-                </div>
-              </article>
-            </div>
-
-            <div class="mt-6 pt-4 border-t border-white/10 text-center">
-              <a
-                :href="INSTAGRAM_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn-ghost text-sm"
-              >
-                Abrir Burbuja Política en Instagram →
-              </a>
-            </div>
-          </template>
         </div>
 
         <!-- Footer -->
         <footer class="mt-8 text-center text-xs text-muted-dark">
-          <p>Cortana Monitor v2 &mdash; Scraper headless con Playwright</p>
+          <p>Cortana Monitor v2 &mdash; Monitor de Facebook y web</p>
           <p class="mt-1">Los datos se almacenan localmente en el servidor.</p>
         </footer>
       </main>

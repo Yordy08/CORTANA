@@ -14,7 +14,7 @@ export interface ScrapedPost {
   date?: string
   link: string
   mediaType?: 'image' | 'video' | 'text'
-  source: 'facebook' | 'web' | 'instagram'
+  source: 'facebook' | 'web'
   detectedAt: string
   notified: boolean
 }
@@ -22,7 +22,6 @@ export interface ScrapedPost {
 const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(process.cwd(), 'data')
 const FACEBOOK_FILE = join(DATA_DIR, 'facebook-posts.json')
 const WEB_FILE = join(DATA_DIR, 'web-posts.json')
-const INSTAGRAM_FILE = join(DATA_DIR, 'instagram-posts.json')
 
 async function ensureDataDir() {
   if (!existsSync(DATA_DIR)) {
@@ -68,17 +67,16 @@ function generateId(link: string, source: string): string {
   return `${source}-${hash}`
 }
 
-type Source = 'facebook' | 'web' | 'instagram'
+type Source = 'facebook' | 'web'
 
 function getSourceFile(source: Source) {
   if (source === 'facebook') return FACEBOOK_FILE
-  if (source === 'instagram') return INSTAGRAM_FILE
   return WEB_FILE
 }
 
 function getCandidateKey(candidate: { link?: string; image?: string; text?: string; mediaType?: string }, source: Source) {
   const linkKey = normalizeLink(candidate.link)
-  if (source === 'facebook' || source === 'instagram') {
+  if (source === 'facebook') {
     return linkKey || candidate.text?.replace(/\s+/g, ' ').trim().slice(0, 180).toLowerCase() || ''
   }
 

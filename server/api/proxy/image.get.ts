@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'La URL de la imagen no es válida.' })
   }
 
-  const allowedHosts = ['cdninstagram.com', 'fbcdn.net', 'scontent']
+  const allowedHosts = ['fbcdn.net', 'scontent']
   if (!allowedHosts.some((host) => parsedUrl.hostname.includes(host))) {
     throw createError({ statusCode: 400, statusMessage: 'Dominio de imagen no permitido.' })
   }
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
     headers: {
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CortanaMonitor/2.0',
       accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      referer: 'https://www.instagram.com/'
+      referer: 'https://www.facebook.com/'
     },
     signal: AbortSignal.timeout(15000)
   })
