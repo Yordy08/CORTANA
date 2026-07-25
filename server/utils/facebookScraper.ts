@@ -165,7 +165,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     }
 
     // Wait a bit for JavaScript to render posts
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(2500)
 
     const collectedPosts: FacebookPost[] = []
     const seenPosts = new Set<string>()
@@ -316,10 +316,10 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     let roundsWithoutNewPosts = 0
 
     // Collect after each scroll; Facebook can remove previous posts from DOM while new ones load.
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 8; i++) {
       const beforeCount = collectedPosts.length
       await page.evaluate(() => window.scrollBy(0, Math.round(window.innerHeight * 1.15)))
-      await page.waitForTimeout(2200)
+      await page.waitForTimeout(1000)
       await collectVisiblePosts()
 
       if (collectedPosts.length === beforeCount) {
@@ -328,7 +328,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
         roundsWithoutNewPosts = 0
       }
 
-      if (collectedPosts.length >= 80 || roundsWithoutNewPosts >= 5) break
+      if (collectedPosts.length >= 40 || roundsWithoutNewPosts >= 2) break
     }
 
     const posts = collectedPosts.slice(0, 80)

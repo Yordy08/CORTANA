@@ -263,7 +263,7 @@ export default defineEventHandler(async (event) => {
     return true
   }).slice(0, 80).map((post, index) => ({
     id: createDisplayId(post, index),
-    context: cleanFacebookText(post.text) || post.text,
+    context: (cleanFacebookText(post.text) || post.text).slice(0, 260),
     fullText: cleanFacebookText(post.text) || post.text,
     image: post.image,
     link: normalizeFacebookLink(post.link),

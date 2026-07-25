@@ -33,12 +33,13 @@ const installPrompt = ref<Event | null>(null)
 const showNewBadge = ref(false)
 const newCount = ref(0)
 const lastCheckedAt = ref('')
-const copiedTextId = ref('')
 const syncing = ref(false)
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
+const FACEBOOK_REFRESH_MS = 5 * 60000
+const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {
   window.addEventListener('beforeinstallprompt', (event) => {
@@ -56,8 +57,9 @@ onMounted(() => {
     websiteItems.value = JSON.parse(savedWeb)
   }
 
-  // Initial load
-  refreshAll()
+  // Initial load: render stored data first, then update in the background.
+  loadCachedPosts()
+  setTimeout(() => refreshAll(true), 0)
 
   // Auto-check Facebook and web every minute.
   checkInterval = setInterval(() => {
@@ -84,7 +86,14 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    await Promise.all([loadFacebookPosts(true), loadWebsitePosts(true)])
+    const shouldRefreshFacebook = !silent
+      || !facebookItems.value.length
+      || Date.now() - lastFacebookSyncAt.value >= FACEBOOK_REFRESH_MS
+    const tasks = [loadWebsitePosts(true)]
+
+    if (shouldRefreshFacebook) tasks.push(loadFacebookPosts(true))
+
+    await Promise.all(tasks)
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -93,6 +102,26 @@ async function refreshAll(silent = false) {
 
 function cacheItems(source: string, items: MonitorItem[]) {
   sessionStorage.setItem(`cortana-${source}-items`, JSON.stringify(items))
+}
+
+async function loadCachedPosts() {
+  try {
+    const [facebookCache, webCache] = await Promise.all([
+      $fetch<MonitorResponse>('/api/monitor/facebook/cache'),
+      $fetch<MonitorResponse>('/api/monitor/web/cache')
+    ])
+
+    if (facebookCache.items?.length) {
+      facebookItems.value = facebookCache.items
+      cacheItems('facebook', facebookCache.items)
+    }
+    if (webCache.items?.length) {
+      websiteItems.value = webCache.items
+      cacheItems('web', webCache.items)
+    }
+  } catch {
+    // Session cache already populated above if available.
+  }
 }
 
 const ignoredComparableWords = new Set([
@@ -214,6 +243,8 @@ async function loadFacebookPosts(silent = false) {
       cacheItems('facebook', response.items)
     }
 
+    lastFacebookSyncAt.value = Date.now()
+
     message.value = response.message || ''
 
     if (response.newDetected && response.newDetected > 0) {
@@ -295,21 +326,6 @@ async function copyLink(link = '') {
       btn.textContent = 'Copiado ✓'
       setTimeout(() => { if (btn) btn.textContent = original }, 1200)
     }
-  } catch {
-    // ignore
-  }
-}
-
-async function copyPostText(item: MonitorItem) {
-  const text = (item.fullText || item.context)?.trim()
-  if (!text) return
-
-  try {
-    await navigator.clipboard.writeText(text)
-    copiedTextId.value = item.id
-    setTimeout(() => {
-      if (copiedTextId.value === item.id) copiedTextId.value = ''
-    }, 1400)
   } catch {
     // ignore
   }
@@ -527,14 +543,6 @@ function formatDate(isoOrLocale: string | undefined): string {
                     {{ formatDate(item.createdAt) || 'Publicación reciente' }}
                   </p>
                   <p class="whitespace-pre-line text-sm leading-relaxed">{{ item.context }}</p>
-
-                  <button
-                    class="btn-secondary text-xs !px-3 !py-1.5 mt-2"
-                    type="button"
-                    @click="copyPostText(item)"
-                  >
-                    {{ copiedTextId === item.id ? 'Texto copiado' : 'Copiar texto' }}
-                  </button>
 
                   <a
                     v-if="item.link && isFacebookUrl(item.link)"
