@@ -21,6 +21,16 @@ type MonitorResponse = {
   newDetected?: number
 }
 
+type Correction = {
+  id: string
+  postId: string
+  source: 'facebook' | 'web'
+  field: string
+  suggestedValue: string
+  status: 'pending' | 'done'
+  createdAt: string
+}
+
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
 
@@ -46,6 +56,73 @@ const showNewBadge = ref(false)
 const newCount = ref(0)
 const lastCheckedAt = ref('')
 const syncing = ref(false)
+const corrections = ref<Correction[]>([])
+const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
+const suggestField = ref('category')
+const suggestValue = ref('')
+
+function correctionsFor(itemId: string) {
+  return corrections.value.filter((c) => c.postId === itemId && c.status === 'pending')
+}
+
+async function fetchCorrections() {
+  try {
+    const res = await $fetch<{ corrections: Correction[] }>('/api/corrections/list')
+    corrections.value = res.corrections
+  } catch {}
+}
+
+function openSuggest(item: MonitorItem, source: 'facebook' | 'web') {
+  suggestItem.value = { item, source }
+  suggestField.value = 'category'
+  suggestValue.value = item.category || ''
+}
+
+function closeSuggest() {
+  suggestItem.value = null
+  suggestField.value = 'category'
+  suggestValue.value = ''
+}
+
+async function submitSuggestion() {
+  if (!suggestItem.value || !suggestValue.value.trim()) return
+  const { item, source } = suggestItem.value
+  try {
+    await $fetch('/api/corrections/create', {
+      method: 'POST',
+      body: {
+        postId: item.id,
+        source,
+        field: suggestField.value,
+        currentValue: item.category || '',
+        suggestedValue: suggestValue.value.trim()
+      }
+    })
+    await fetchCorrections()
+    closeSuggest()
+  } catch {}
+}
+
+async function applyCorrection(correctionId: string) {
+  try {
+    const res = await $fetch('/api/corrections/resolve', {
+      method: 'POST',
+      body: { correctionId }
+    }) as any
+    corrections.value = corrections.value.filter((c) => c.id !== correctionId)
+    const updatedPost = res.updatedPost as { id: string; category?: string } | undefined
+    if (updatedPost?.id && res.correction?.field === 'category') {
+      let idx = facebookItems.value.findIndex((i) => i.id === updatedPost.id)
+      if (idx !== -1) {
+        facebookItems.value[idx] = { ...facebookItems.value[idx], category: res.correction.suggestedValue }
+      }
+      idx = websiteItems.value.findIndex((i) => i.id === updatedPost.id)
+      if (idx !== -1) {
+        websiteItems.value[idx] = { ...websiteItems.value[idx], category: res.correction.suggestedValue }
+      }
+    }
+  } catch {}
+}
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
@@ -72,10 +149,12 @@ onMounted(() => {
   // Initial load: render stored data first, then update in the background.
   loadCachedPosts()
   setTimeout(() => refreshAll(true), 0)
+  fetchCorrections()
 
   // Auto-check Facebook and web every minute.
   checkInterval = setInterval(() => {
     refreshAll(true)
+    fetchCorrections()
   }, AUTO_REFRESH_MS)
 })
 
@@ -399,14 +478,9 @@ function formatDate(isoOrLocale: string | undefined): string {
         <header class="glass-card p-6 md:p-8 mb-6 hero-gradient">
           <div class="flex flex-col md:flex-row gap-4 md:items-end md:justify-between">
             <div class="space-y-3">
-              <span class="eyebrow">PWA de monitoreo</span>
               <h1 class="text-3xl md:text-4xl font-bold tracking-tight">
                 Cortana Monitor
               </h1>
-              <p class="text-muted max-w-xl">
-                Monitorea automáticamente <strong class="text-white">Burbuja de Córdoba</strong> en Facebook y
-                <strong class="text-white">Burbuja Política</strong> en la web. Te notifica cuando hay nuevas publicaciones.
-              </p>
             </div>
             <button
               v-if="installPrompt"
@@ -434,36 +508,15 @@ function formatDate(isoOrLocale: string | undefined): string {
           <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
           </span>
+          <span
+            v-if="corrections.length > 0"
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 text-xs font-semibold ring-1 ring-yellow-400/30 animate-pulse"
+          >
+            {{ corrections.length }} corrección pendiente
+          </span>
         </div>
 
-        <!-- URL Panel -->
-        <div class="glass-card p-5 md:p-6 mb-6">
-          <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
-            <div>
-              <label class="block text-xs font-medium text-muted mb-1.5">Facebook monitoreado</label>
-              <input
-                :value="FACEBOOK_URL"
-                class="input-field text-sm"
-                readonly
-              >
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-muted mb-1.5">Web monitoreada</label>
-              <input
-                :value="WEBSITE_URL"
-                class="input-field text-sm"
-                readonly
-              >
-            </div>
-            <button
-              class="btn-primary w-full md:w-auto"
-              :disabled="loading"
-              @click="refreshAll()"
-            >
-              {{ loading ? 'Revisando...' : 'Revisar' }}
-            </button>
-          </div>
-        </div>
+
 
         <!-- Tabs + Posts -->
         <div class="glass-card p-5 md:p-6">
@@ -487,13 +540,6 @@ function formatDate(isoOrLocale: string | undefined): string {
 
             </div>
 
-            <button
-              class="btn-secondary text-sm"
-              :disabled="loading"
-              @click="refreshActiveView()"
-            >
-              {{ loading ? 'Cargando...' : '↻ Actualizar' }}
-            </button>
           </div>
 
           <!-- Message -->
@@ -552,30 +598,55 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <span class="source-pill" :class="existsInWeb(item) ? 'source-pill-ok' : 'source-pill-missing'">WEB</span>
                   </div>
 
+                  <div v-if="correctionsFor(item.id).length" class="flex flex-wrap gap-2">
+                    <div
+                      v-for="corr in correctionsFor(item.id)"
+                      :key="corr.id"
+                      class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-yellow-500/15 border border-yellow-400/25 text-xs text-yellow-200"
+                    >
+                      <span>✏️ {{ corr.field }}: {{ corr.suggestedValue }}</span>
+                      <button
+                        class="ml-1 px-2 py-0.5 rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 font-semibold"
+                        @click="applyCorrection(corr.id)"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  </div>
+
                   <p class="text-xs text-muted-dark">
                     {{ formatDate(item.createdAt) || 'Publicación reciente' }}
                   </p>
                   <p class="whitespace-pre-line text-sm leading-relaxed">{{ item.context }}</p>
 
-                  <a
-                    v-if="item.link && isFacebookUrl(item.link)"
-                    :href="item.link"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent mt-2 transition-colors"
-                  >
-                    Abrir en Facebook →
-                  </a>
+                  <div class="flex flex-wrap items-center gap-2 mt-2">
+                    <a
+                      v-if="item.link && isFacebookUrl(item.link)"
+                      :href="item.link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent transition-colors"
+                    >
+                      Abrir en Facebook →
+                    </a>
 
-                  <a
-                    v-else-if="item.link && isWebsiteUrl(item.link)"
-                    :href="item.link"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent mt-2 transition-colors"
-                  >
-                    Ver noticia en web →
-                  </a>
+                    <a
+                      v-else-if="item.link && isWebsiteUrl(item.link)"
+                      :href="item.link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1 text-xs text-accent-light hover:text-accent transition-colors"
+                    >
+                      Ver noticia en web →
+                    </a>
+
+                    <button
+                      class="ml-auto inline-flex items-center gap-1 text-xs text-muted hover:text-white transition-colors"
+                      @click="openSuggest(item, 'facebook')"
+                    >
+                      ✏️
+                    </button>
+                  </div>
                 </div>
               </article>
             </div>
@@ -626,6 +697,22 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-missing'">Facebook</span>
                   </div>
 
+                  <div v-if="correctionsFor(item.id).length" class="flex flex-wrap gap-2">
+                    <div
+                      v-for="corr in correctionsFor(item.id)"
+                      :key="corr.id"
+                      class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-yellow-500/15 border border-yellow-400/25 text-xs text-yellow-200"
+                    >
+                      <span>✏️ {{ corr.field }}: {{ corr.suggestedValue }}</span>
+                      <button
+                        class="ml-1 px-2 py-0.5 rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 font-semibold"
+                        @click="applyCorrection(corr.id)"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  </div>
+
                   <span v-if="item.category && !item.image" class="category-pill">{{ item.category }}</span>
 
                   <h3 class="font-semibold text-sm leading-snug">{{ item.title || 'Publicación web' }}</h3>
@@ -634,13 +721,22 @@ function formatDate(isoOrLocale: string | undefined): string {
                   </p>
                   <p class="whitespace-pre-line text-sm text-muted leading-relaxed">{{ item.context }}</p>
 
-                  <button
-                    v-if="item.link"
-                    class="btn-primary text-xs !px-3 !py-1.5 mt-2"
-                    @click="copyLink(item.link)"
-                  >
-                    Copiar enlace
-                  </button>
+                  <div class="flex flex-wrap items-center gap-2 mt-2">
+                    <button
+                      v-if="item.link"
+                      class="btn-primary text-xs !px-3 !py-1.5"
+                      @click="copyLink(item.link)"
+                    >
+                      Copiar enlace
+                    </button>
+
+                    <button
+                      class="ml-auto inline-flex items-center gap-1 text-xs text-muted hover:text-white transition-colors"
+                      @click="openSuggest(item, 'web')"
+                    >
+                      ✏️
+                    </button>
+                  </div>
                 </div>
               </article>
             </div>
@@ -657,6 +753,53 @@ function formatDate(isoOrLocale: string | undefined): string {
             </div>
           </template>
 
+        </div>
+
+        <!-- Suggest Correction Modal -->
+        <div
+          v-if="suggestItem"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          @click.self="closeSuggest"
+        >
+          <div class="glass-card p-6 w-full max-w-md space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-semibold">Sugerir corrección</h3>
+              <button class="text-muted hover:text-white text-xl" @click="closeSuggest">✕</button>
+            </div>
+            <div class="space-y-1 text-sm text-muted">
+              <p class="text-xs">Publicación:</p>
+              <p class="text-white line-clamp-2">{{ suggestItem.item.context }}</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-muted mb-1.5">Campo a corregir</label>
+              <select
+                v-model="suggestField"
+                class="input-field text-sm"
+              >
+                <option value="category">Categoría</option>
+                <option value="title">Título</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-muted mb-1.5">Valor sugerido</label>
+              <input
+                v-model="suggestValue"
+                class="input-field text-sm"
+                :placeholder="'Ej: Política, Deportes...'"
+                @keyup.enter="submitSuggestion"
+              >
+            </div>
+            <div class="flex gap-3 justify-end pt-2">
+              <button class="btn-secondary text-sm" @click="closeSuggest">Cancelar</button>
+              <button
+                class="btn-primary text-sm"
+                :disabled="!suggestValue.trim()"
+                @click="submitSuggestion"
+              >
+                Enviar sugerencia
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Footer -->
