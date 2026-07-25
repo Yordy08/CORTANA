@@ -16,6 +16,7 @@ type DisplayItem = {
 type WordPressPost = {
   id: number
   date?: string
+  date_gmt?: string
   link?: string
   title?: { rendered?: string }
   excerpt?: { rendered?: string }
@@ -191,7 +192,8 @@ async function fetchDailyWebItems(existingTextKeys: Set<string>): Promise<Displa
   const items: DisplayItem[] = []
 
   for (const post of posts) {
-    const postTime = Date.parse(post.date || '')
+    const postDate = post.date_gmt ? post.date_gmt + 'Z' : post.date
+    const postTime = Date.parse(postDate || '')
     if (Number.isNaN(postTime) || postTime < start.getTime() || postTime >= end.getTime()) continue
 
     const title = cleanHtmlText(post.title?.rendered)
@@ -211,7 +213,7 @@ async function fetchDailyWebItems(existingTextKeys: Set<string>): Promise<Displa
       image: getWordPressImage(post),
       link: post.link || 'https://burbujapolitica.com/',
       mediaType: getWordPressImage(post) ? 'image' : 'text',
-      createdAt: post.date,
+      createdAt: postDate,
       isNew: false
     })
   }

@@ -16,6 +16,7 @@ type WebItem = {
 type WordPressPost = {
   id: number
   date?: string
+  date_gmt?: string
   link?: string
   title?: { rendered?: string }
   excerpt?: { rendered?: string }
@@ -123,7 +124,7 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 
 async function fetchWordPressCandidates(baseUrl: URL) {
   const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
-  apiUrl.searchParams.set('per_page', '80')
+  apiUrl.searchParams.set('per_page', '30')
   apiUrl.searchParams.set('_embed', '1')
 
   const response = await fetch(apiUrl, {
@@ -140,7 +141,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   const todayPosts = posts.filter(isInsideTodayWindow)
   const selectedPosts = todayPosts.length ? todayPosts : posts
 
-  return selectedPosts.slice(0, 80).map((post) => {
+  return selectedPosts.slice(0, 30).map((post) => {
     const title = cleanText(post.title?.rendered)
     const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
     const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
@@ -152,7 +153,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
       fullText: title ? `${title}: ${fullText || excerpt || 'Sin descripción disponible.'}` : fullText || excerpt,
       leadText,
       category: getWordPressCategory(post),
-      date: post.date,
+      date: post.date_gmt ? post.date_gmt + 'Z' : post.date,
       link: post.link || baseUrl.toString()
     }
   }).filter((post) => post.text && post.link)

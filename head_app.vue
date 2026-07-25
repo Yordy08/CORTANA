@@ -139,7 +139,7 @@ async function applyCorrection(correctionId: string) {
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
 const AUTO_REFRESH_MS = 60000
-const FACEBOOK_REFRESH_MS = 5 * 60000
+const FACEBOOK_REFRESH_MS = 60000
 const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {

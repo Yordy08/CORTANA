@@ -162,6 +162,10 @@ export async function addNewPosts(
           existingPost.image = candidate.image
           changed = true
         }
+        if (candidate.date && existingPost.date !== candidate.date) {
+          existingPost.date = candidate.date
+          changed = true
+        }
 
         if (changed) await writePosts(getSourceFile(source), getCacheKey(source), posts)
         continue
