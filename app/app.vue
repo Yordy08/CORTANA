@@ -1,4 +1,4 @@
- <script setup lang="ts">
+op <script setup lang="ts">
 type MonitorItem = {
   id: string
   title?: string
@@ -28,7 +28,7 @@ const activeView = ref<'facebook' | 'web' | 'sesion'>('facebook')
 const facebookEmbedUrl = ref('https://m.facebook.com')
 const fbIframe = ref<HTMLIFrameElement | null>(null)
 const sesionIframe = ref<HTMLIFrameElement | null>(null)
-const sesionUrl = ref('https://m.facebook.com/login.php')
+const sesionUrl = ref('https://www.facebook.com/BurbujadeCordoba')
 const sesionLoading = ref(false)
 const sesionError = ref('')
 
@@ -703,10 +703,11 @@ function formatDate(isoOrLocale: string | undefined): string {
           <template v-else-if="activeView === 'sesion'">
             <div class="space-y-5">
               <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-                <div>
-                  <h3 class="text-lg font-semibold">Iniciar sesión en Facebook</h3>
+              <div>
+                  <h3 class="text-lg font-semibold">Sesión de Facebook</h3>
                   <p class="text-sm text-muted mt-1">
-                    Usa esta vista para iniciar sesión en tu cuenta de Facebook directamente desde la app.
+                    Página de <strong>Burbuja de Córdoba</strong> con tu sesión iniciada.
+                    Mantén esta vista abierta para que el scraper pueda usar las cookies de tu sesión.
                   </p>
                 </div>
                 <button
@@ -720,12 +721,12 @@ function formatDate(isoOrLocale: string | undefined): string {
 
               <!-- URL input -->
               <div>
-                <label class="block text-xs font-medium text-muted mb-1.5">URL de Facebook Login</label>
+                <label class="block text-xs font-medium text-muted mb-1.5">URL de Facebook que se scrapea</label>
                 <div class="flex gap-2">
                   <input
                     v-model="sesionUrl"
                     class="input-field text-sm flex-1"
-                    placeholder="https://m.facebook.com/login.php"
+                    placeholder="https://www.facebook.com/BurbujadeCordoba"
                     @keyup.enter="reloadSesionIframe()"
                   >
                   <button class="btn-primary text-sm !px-4" @click="reloadSesionIframe()">
@@ -767,11 +768,11 @@ function formatDate(isoOrLocale: string | undefined): string {
 
               <!-- Help info -->
               <div class="px-4 py-3 rounded-xl bg-accent/10 border border-accent/20 text-sm text-accent-light">
-                <p class="font-medium mb-1">💡 Nota:</p>
+                <p class="font-medium mb-1">💡 ¿Cómo funciona?</p>
                 <p>
-                  Esta vista usa un proxy del servidor que elimina las cabeceras que bloquean iframes,
-                  permitiendo que Facebook Login funcione dentro de la app. Si aún tienes problemas,
-                  puedes abrir la página en una ventana emergente.
+                  Esta vista carga la página de <strong>Burbuja de Córdoba</strong> en Facebook a través de un proxy que elimina los bloqueos de iframe.
+                  Inicia sesión aquí y tu sesión se mantendrá activa mientras esta pestaña esté abierta.
+                  El scraper podrá usar las cookies de esta sesión para obtener más publicaciones.
                 </p>
                 <button
                   class="btn-primary text-xs !px-3 !py-1.5 mt-3"
