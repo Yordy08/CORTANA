@@ -9,7 +9,8 @@ export default defineNuxtConfig({
 
   routeRules: {
     '/': { headers: { 'cache-control': 'no-store' } },
-    '/sw.js': { headers: { 'cache-control': 'no-store, no-cache, must-revalidate' } }
+    '/sw.js': { headers: { 'cache-control': 'no-store, no-cache, must-revalidate' } },
+    '/api/monitor/facebook': { maxDuration: 60 }
   },
 
   app: {

@@ -283,7 +283,9 @@ export default defineEventHandler(async (event) => {
     source: 'facebook',
     totalStored: allPosts.length,
     newDetected: newPosts.length,
-    message: newPosts.length > 0
+    message: result.error && newPosts.length === 0
+      ? `Facebook no entrego publicaciones nuevas: ${result.error}. Mostrando ${displayItems.length} publicación(es) guardada(s) o de respaldo.`
+      : newPosts.length > 0
       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s). Mostrando ${displayItems.length} publicaciones de hoy de 6:00 a. m. a medianoche.`
       : `Mostrando ${displayItems.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
   }

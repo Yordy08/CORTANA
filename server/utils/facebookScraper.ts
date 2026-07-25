@@ -111,18 +111,31 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   if (publicResult.posts.length > 0) return publicResult
 
   let browser
+  const isServerless = Boolean(process.env.VERCEL)
+  const browserWsEndpoint = process.env.FACEBOOK_BROWSER_WS_ENDPOINT || process.env.BROWSERLESS_WS_ENDPOINT
+
+  if (isServerless && !browserWsEndpoint) {
+    return {
+      posts: [],
+      error: `${publicResult.error || 'Facebook no entrego publicaciones publicas.'} | Playwright local desactivado en Vercel.`
+    }
+  }
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--window-size=1280,900'
-      ]
-    })
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--window-size=1280,900'
+    ]
+
+    browser = browserWsEndpoint
+      ? await chromium.connectOverCDP(browserWsEndpoint)
+      : await chromium.launch({
+        headless: true,
+        args: launchArgs
+      })
 
     const context = await browser.newContext({
       userAgent:
