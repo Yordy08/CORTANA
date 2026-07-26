@@ -85,10 +85,9 @@ async function fetchCorrections() {
       query: { _t: Date.now() },
       cache: 'no-store'
     })
-    // Do not lose a visible pending notice on a transient empty response.
-    if (res.corrections.length > 0 || corrections.value.length === 0) {
-      corrections.value = res.corrections
-    }
+    // The server response is authoritative: an empty list means another
+    // user already applied or resolved every pending correction.
+    corrections.value = res.corrections
   } catch {}
 }
 
@@ -163,6 +162,7 @@ async function applyCorrection(correctionId: string) {
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
+let correctionInterval: ReturnType<typeof setInterval> | null = null
 // Keep the monitor responsive while avoiding overlapping scrapes.
 const AUTO_REFRESH_MS = 15000
 const FACEBOOK_REFRESH_MS = 15000
@@ -177,16 +177,17 @@ onMounted(() => {
   // Always render fresh API responses. Do not restore browser/session cache.
   setTimeout(() => refreshAll(false), 0)
   fetchCorrections()
+  correctionInterval = setInterval(fetchCorrections, 3000)
 
   // Auto-check Facebook and web every minute.
   checkInterval = setInterval(() => {
     refreshAll(true)
-    fetchCorrections()
   }, AUTO_REFRESH_MS)
 })
 
 onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)
+  if (correctionInterval) clearInterval(correctionInterval)
 })
 
 async function refreshActiveView(silent = false) {
