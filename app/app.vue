@@ -35,7 +35,7 @@ type Correction = {
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
 
-const activeView = ref<'facebook' | 'web'>('facebook')
+const activeView = ref<'facebook' | 'web'>('web')
 const facebookEmbedUrl = ref('https://m.facebook.com')
 const fbIframe = ref<HTMLIFrameElement | null>(null)
 
@@ -573,17 +573,17 @@ function formatDate(isoOrLocale: string | undefined): string {
             <div class="glass-tabs">
               <button
                 class="glass-tab"
-                :class="{ active: activeView === 'facebook' }"
-                 @click="activeView = 'facebook'"
-              >
-                Facebook
-              </button>
-              <button
-                class="glass-tab"
                 :class="{ active: activeView === 'web' }"
                  @click="activeView = 'web'"
               >
                 Web
+              </button>
+              <button
+                class="glass-tab"
+                :class="{ active: activeView === 'facebook' }"
+                 @click="activeView = 'facebook'"
+              >
+                Facebook
               </button>
 
             </div>
