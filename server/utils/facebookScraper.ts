@@ -1,4 +1,5 @@
-import { chromium } from 'playwright'
+import { chromium as playwrightChromium } from 'playwright'
+import serverlessChromium from '@sparticuz/chromium'
 import * as cheerio from 'cheerio'
 
 export interface FacebookPost {
@@ -315,7 +316,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   const enableLocalBrowser = process.env.FACEBOOK_ENABLE_LOCAL_BROWSER !== 'false'
 
   // Do not wait for a local browser unless it was explicitly enabled.
-  if (!browserWsEndpoint && (isServerless || !enableLocalBrowser)) {
+  if (!browserWsEndpoint && !isServerless && !enableLocalBrowser) {
     return {
       posts: [],
       error: graphResult.error === 'No hay token de Facebook configurado.'
@@ -325,7 +326,7 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   }
 
   try {
-    const launchArgs = [
+    const launchArgs = isServerless ? serverlessChromium.args : [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
@@ -334,8 +335,12 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     ]
 
     browser = browserWsEndpoint
-      ? await chromium.connectOverCDP(browserWsEndpoint)
-      : await chromium.launch({ headless: true, args: launchArgs })
+      ? await playwrightChromium.connectOverCDP(browserWsEndpoint)
+      : await playwrightChromium.launch({
+          headless: true,
+          args: launchArgs,
+          ...(isServerless ? { executablePath: await serverlessChromium.executablePath() } : {})
+        })
 
     if (browserWsEndpoint) {
       context = browser.contexts()[0]

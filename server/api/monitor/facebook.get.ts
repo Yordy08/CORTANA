@@ -239,7 +239,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Keep failed checks short. Current data is more useful than a long request.
-  const OVERALL_TIMEOUT = process.env.VERCEL ? 10000 : 30000
+  const OVERALL_TIMEOUT = process.env.VERCEL ? 55000 : 30000
 
   // Race the scraper against a timeout so the UI does not remain blocked.
   const result = await Promise.race([
