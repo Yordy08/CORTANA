@@ -43,14 +43,10 @@ self.addEventListener('fetch', (event) => {
 
   // For API requests, try network first, fallback to cache
   if (request.url.includes('/api/')) {
+    // Monitor data must never be served from an older service-worker cache.
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
-          return response
-        })
-        .catch(() => caches.match(request).then((cached) => cached || new Response('offline', { status: 503 })))
+        .catch(() => new Response('offline', { status: 503 }))
     )
     return
   }

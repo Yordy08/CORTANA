@@ -138,8 +138,9 @@ async function applyCorrection(correctionId: string) {
 
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
-const AUTO_REFRESH_MS = 60000
-const FACEBOOK_REFRESH_MS = 60000
+// Keep the monitor responsive while avoiding overlapping scrapes.
+const AUTO_REFRESH_MS = 15000
+const FACEBOOK_REFRESH_MS = 15000
 const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {
@@ -148,19 +149,8 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Restore cached items from session
-  const savedFacebook = sessionStorage.getItem('cortana-facebook-items')
-  if (savedFacebook) {
-    facebookItems.value = JSON.parse(savedFacebook)
-  }
-  const savedWeb = sessionStorage.getItem('cortana-web-items')
-  if (savedWeb) {
-    websiteItems.value = JSON.parse(savedWeb)
-  }
-
-  // Initial load: render stored data first, then update in the background.
-  loadCachedPosts()
-  setTimeout(() => refreshAll(true), 0)
+  // Always render fresh API responses. Do not restore browser/session cache.
+  setTimeout(() => refreshAll(false), 0)
   fetchCorrections()
 
   // Auto-check Facebook and web every minute.
@@ -200,30 +190,6 @@ async function refreshAll(silent = false) {
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
-  }
-}
-
-function cacheItems(source: string, items: MonitorItem[]) {
-  sessionStorage.setItem(`cortana-${source}-items`, JSON.stringify(items))
-}
-
-async function loadCachedPosts() {
-  try {
-    const [facebookCache, webCache] = await Promise.all([
-      $fetch<MonitorResponse>('/api/monitor/facebook/cache'),
-      $fetch<MonitorResponse>('/api/monitor/web/cache')
-    ])
-
-    if (facebookCache.items?.length) {
-      facebookItems.value = facebookCache.items
-      cacheItems('facebook', facebookCache.items)
-    }
-    if (webCache.items?.length) {
-      websiteItems.value = webCache.items
-      cacheItems('web', webCache.items)
-    }
-  } catch {
-    // Session cache already populated above if available.
   }
 }
 
@@ -338,12 +304,12 @@ async function loadFacebookPosts(silent = false) {
 
   try {
     const response = await $fetch<MonitorResponse>('/api/monitor/facebook', {
-      query: { url: FACEBOOK_URL }
+      query: { url: FACEBOOK_URL, _t: Date.now() },
+      cache: 'no-store'
     })
 
     if (response.items?.length) {
       facebookItems.value = response.items
-      cacheItems('facebook', response.items)
     }
 
     lastFacebookSyncAt.value = Date.now()
@@ -374,12 +340,12 @@ async function loadWebsitePosts(silent = false) {
 
   try {
     const response = await $fetch<MonitorResponse>('/api/monitor/web', {
-      query: { url: WEBSITE_URL }
+      query: { url: WEBSITE_URL, _t: Date.now() },
+      cache: 'no-store'
     })
 
     if (response.items?.length) {
       websiteItems.value = response.items
-      cacheItems('web', response.items)
     }
 
     message.value = response.message || ''
@@ -515,7 +481,7 @@ function formatDate(isoOrLocale: string | undefined): string {
           </span>
           <span class="inline-flex items-center gap-1.5 text-accent-light">
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
-            {{ syncing ? 'Sincronizando...' : 'Autoactualiza cada 60s' }}
+             {{ syncing ? 'Sincronizando...' : 'Autoactualiza cada 15s' }}
           </span>
           <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
@@ -538,14 +504,14 @@ function formatDate(isoOrLocale: string | undefined): string {
               <button
                 class="glass-tab"
                 :class="{ active: activeView === 'facebook' }"
-                @click="activeView = 'facebook'; refreshActiveView(true)"
+                 @click="activeView = 'facebook'"
               >
                 Facebook
               </button>
               <button
                 class="glass-tab"
                 :class="{ active: activeView === 'web' }"
-                @click="activeView = 'web'; refreshActiveView(true)"
+                 @click="activeView = 'web'"
               >
                 Web
               </button>
@@ -595,12 +561,12 @@ function formatDate(isoOrLocale: string | undefined): string {
                     loading="lazy"
                   >
                   <div v-if="item.mediaType === 'video'" class="video-overlay">
-                    <span class="video-badge">VIDEO</span>
+                     <span class="video-badge">APAGADO · VIDEO</span>
                   </div>
                 </div>
 
                 <div v-else-if="item.mediaType === 'video'" class="video-placeholder">
-                  <span class="video-badge">VIDEO</span>
+                   <span class="video-badge">APAGADO · VIDEO</span>
                   <span class="text-xs text-white/60">Publicación con video</span>
                 </div>
 

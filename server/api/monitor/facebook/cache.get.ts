@@ -48,12 +48,17 @@ function createDisplayId(post: { link?: string; text?: string }, index: number) 
 function inferMediaType(post: { mediaType?: string; link?: string; image?: string }) {
   if (post.mediaType === 'video') return 'video'
   const link = normalizeFacebookLink(post.link).toLowerCase()
-  if (link.includes('/videos/') || link.includes('/watch/')) return 'video'
+  if (link.includes('/videos/') || link.includes('/reel/') || link.includes('/watch/')) return 'video'
   return post.image ? 'image' : 'text'
 }
 
+function isRecent(post: { detectedAt?: string; date?: string }) {
+  const timestamp = Date.parse(post.detectedAt || post.date || '')
+  return !Number.isNaN(timestamp) && Date.now() - timestamp <= 24 * 60 * 60 * 1000
+}
+
 export default defineEventHandler(async () => {
-  const posts = await getStoredPosts('facebook')
+  const posts = (await getStoredPosts('facebook')).filter(isRecent)
   const items: DisplayItem[] = posts.slice(0, 80).map((post, index) => {
     const text = cleanFacebookText(post.text) || post.text
 

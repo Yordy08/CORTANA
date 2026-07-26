@@ -9,6 +9,22 @@ export interface FacebookPost {
   mediaType?: 'image' | 'video' | 'text'
 }
 
+type GraphPost = {
+  message?: string
+  created_time?: string
+  permalink_url?: string
+  full_picture?: string
+  attachments?: {
+    data?: Array<{
+      media_type?: string
+      type?: string
+      url?: string
+      media?: { image?: { src?: string } }
+      subattachments?: { data?: Array<{ media_type?: string; type?: string }> }
+    }>
+  }
+}
+
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.147 Mobile Safari/537.36'
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 
@@ -35,8 +51,54 @@ function getPageId(pageUrl: string): string {
   }
 }
 
-const SCRAPE_TIMEOUT = 5000
-const DESKTOP_TIMEOUT = 6000
+function graphAttachmentIsVideo(post: GraphPost) {
+  const attachments = post.attachments?.data || []
+  return attachments.some((attachment) => {
+    const nested = attachment.subattachments?.data || []
+    return [attachment.media_type, attachment.type, ...nested.flatMap((item) => [item.media_type, item.type])]
+      .some((type) => String(type || '').toLowerCase().includes('video'))
+  })
+}
+
+async function scrapeFacebookGraphPage(pageUrl: string): Promise<{
+  posts: FacebookPost[]
+  error?: string
+}> {
+  const accessToken = process.env.FACEBOOK_ACCESS_TOKEN || process.env.FACEBOOK_PAGE_ACCESS_TOKEN
+  if (!accessToken) return { posts: [], error: 'No hay token de Facebook configurado.' }
+
+  const pageId = process.env.FACEBOOK_PAGE_ID || getPageId(pageUrl)
+  if (!pageId) return { posts: [], error: 'No se pudo extraer el ID de la página.' }
+
+  try {
+    const apiUrl = new URL(`https://graph.facebook.com/v23.0/${encodeURIComponent(pageId)}/posts`)
+    apiUrl.searchParams.set('fields', 'message,created_time,permalink_url,full_picture,attachments{media_type,type,url,media,subattachments}')
+    apiUrl.searchParams.set('limit', '100')
+    apiUrl.searchParams.set('access_token', accessToken)
+
+    const response = await fetch(apiUrl, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    })
+    const payload = await response.json() as { data?: GraphPost[]; error?: { message?: string } }
+    if (!response.ok) return { posts: [], error: payload.error?.message || `Graph API HTTP ${response.status}` }
+
+    const posts = (payload.data || []).map((post) => ({
+      text: cleanText(post.message || '(Publicación sin texto visible)'),
+      image: post.full_picture || post.attachments?.data?.[0]?.media?.image?.src,
+      date: post.created_time,
+      link: post.permalink_url || pageUrl,
+      mediaType: graphAttachmentIsVideo(post) ? 'video' as const : post.full_picture ? 'image' as const : 'text' as const
+    }))
+
+    return { posts }
+  } catch (err) {
+    return { posts: [], error: err instanceof Error ? err.message : 'Error en Graph API' }
+  }
+}
+
+const SCRAPE_TIMEOUT = 3500
+const DESKTOP_TIMEOUT = 4500
 
 function isLoginPage($: cheerio.CheerioAPI): boolean {
   const text = $('body').text().toLowerCase()
@@ -88,12 +150,12 @@ function parseMbasicPosts($: cheerio.CheerioAPI): FacebookPost[] {
     const $el = $(el)
 
     let link = ''
-    const linkEl = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"]').first()
+    const linkEl = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="/reel/"]').first()
     const href = linkEl.attr('href')
     if (href) link = resolveFacebookUrl(href)
 
     if (!link) {
-      const allLinks = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="permalink"], a[href*="photo"]')
+      const allLinks = $el.find('a[href*="story.php"], a[href*="fbid"], a[href*="/posts/"], a[href*="/reel/"], a[href*="permalink"], a[href*="photo"]')
       for (const a of allLinks) {
         const candidate = resolveFacebookUrl($(a).attr('href') || '')
         if (candidate) { link = candidate; break }
@@ -115,7 +177,7 @@ function parseMbasicPosts($: cheerio.CheerioAPI): FacebookPost[] {
       || cleanText($el.find('abbr, time').first().text())
       || undefined
 
-    const hasVideo = $el.find('video, a[href*="/videos/"], a[href*="/watch/"]').length > 0
+    const hasVideo = $el.find('video, a[href*="/videos/"], a[href*="/reel/"], a[href*="/watch/"]').length > 0
     const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
 
     if (!text && !image) return
@@ -132,7 +194,7 @@ function parseMobilePosts($: cheerio.CheerioAPI): FacebookPost[] {
   const posts: FacebookPost[] = []
   const seen = new Set<string>()
 
-  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"]').each((_index, linkEl) => {
+  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/photo"], a[href*="/videos/"], a[href*="/reel/"]').each((_index, linkEl) => {
     const link = resolveFacebookUrl($(linkEl).attr('href'))
     if (!link || link.includes('comment_id=') || seen.has(link)) return
 
@@ -146,7 +208,7 @@ function parseMobilePosts($: cheerio.CheerioAPI): FacebookPost[] {
     const date = container.find('abbr, time').first().attr('title')
       || cleanText(container.find('abbr, time').first().text())
       || undefined
-    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
+    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/reel/') || link.includes('/watch/'))
     const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
 
     if (!text && !image) return
@@ -162,7 +224,7 @@ function parseDesktopPosts($: cheerio.CheerioAPI): FacebookPost[] {
   const posts: FacebookPost[] = []
   const seen = new Set<string>()
 
-  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"]').each((_index, linkEl) => {
+  $('a[href*="/posts/"], a[href*="story.php"], a[href*="permalink"], a[href*="/reel/"]').each((_index, linkEl) => {
     const link = resolveFacebookUrl($(linkEl).attr('href'))
     if (!link || link.includes('comment_id=') || seen.has(link)) return
 
@@ -176,7 +238,7 @@ function parseDesktopPosts($: cheerio.CheerioAPI): FacebookPost[] {
     const date = container.find('abbr, time').first().attr('title')
       || cleanText(container.find('abbr, time').first().text())
       || undefined
-    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/watch/'))
+    const hasVideo = Boolean(link.includes('/videos/') || link.includes('/reel/') || link.includes('/watch/'))
     const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
 
     if (!text && !image) return
@@ -238,6 +300,9 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   posts: FacebookPost[]
   error?: string
 }> {
+  const graphResult = await scrapeFacebookGraphPage(pageUrl)
+  if (graphResult.posts.length > 0) return graphResult
+
   const publicResult = await scrapePublicFacebookPage(pageUrl)
   if (publicResult.posts.length > 0) return publicResult
 
@@ -247,11 +312,15 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
   let shouldCloseContext = false
   const isServerless = Boolean(process.env.VERCEL)
   const browserWsEndpoint = process.env.FACEBOOK_BROWSER_WS_ENDPOINT || process.env.BROWSERLESS_WS_ENDPOINT
+  const enableLocalBrowser = process.env.FACEBOOK_ENABLE_LOCAL_BROWSER !== 'false'
 
-  if (isServerless && !browserWsEndpoint) {
+  // Do not wait for a local browser unless it was explicitly enabled.
+  if (!browserWsEndpoint && (isServerless || !enableLocalBrowser)) {
     return {
       posts: [],
-      error: `${publicResult.error || 'Facebook no entrego publicaciones publicas.'}`
+      error: graphResult.error === 'No hay token de Facebook configurado.'
+        ? graphResult.error
+        : `${graphResult.error || 'Graph API sin respuesta.'} | ${publicResult.error || 'Facebook no entregó publicaciones públicas.'}`
     }
   }
 
@@ -271,12 +340,9 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
     if (browserWsEndpoint) {
       context = browser.contexts()[0]
       if (!context) {
-        context = await browser.newContext({
-          userAgent: MOBILE_UA,
-          viewport: { width: 480, height: 900 },
-          deviceScaleFactor: 2,
-          isMobile: true,
-          hasTouch: true,
+          context = await browser.newContext({
+          userAgent: DESKTOP_UA,
+          viewport: { width: 1280, height: 900 },
           locale: 'es-CO',
           timezoneId: 'America/Bogota'
         })
@@ -284,11 +350,8 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       }
     } else {
       context = await browser.newContext({
-        userAgent: MOBILE_UA,
-        viewport: { width: 480, height: 900 },
-        deviceScaleFactor: 2,
-        isMobile: true,
-        hasTouch: true,
+        userAgent: DESKTOP_UA,
+        viewport: { width: 1280, height: 900 },
         locale: 'es-CO',
         timezoneId: 'America/Bogota',
         extraHTTPHeaders: { 'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8' }
@@ -386,7 +449,13 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
             .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
             .map((t) => t.replace(/Ver menos$/i, '').replace(/Ver más$/i, '').replace(/Ver mas$/i, '').trim())
             .filter((t) => t.length > 10 && !ignored.has(t))
-          return Array.from(new Set(lines)).join('\n\n').trim()
+          const structuredText = Array.from(new Set(lines)).join('\n\n').trim()
+          if (structuredText) return structuredText
+
+          return (element as HTMLElement).innerText
+            .replace(/\s+/g, ' ')
+            .replace(/Ver más|Ver mas|Ver menos/gi, '')
+            .trim()
         }
 
         function extractPost(element: Element) {
@@ -395,11 +464,11 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
           const text = extractText(element)
           const image = bestImage(element)
           const hasVideo = Boolean(
-            element.querySelector('video, a[href*="/videos/"], a[href*="/watch/"], [aria-label*="Reproducir"], [aria-label*="Play"]')
+            element.querySelector('video, a[href*="/videos/"], a[href*="/reel/"], a[href*="/watch/"], [aria-label*="Reproducir"], [aria-label*="Play"]')
           )
           const mediaType = hasVideo ? 'video' : image ? 'image' : 'text'
           const linkEls = element.querySelectorAll(
-            'a[href*="/posts/"], a[href*="/photo/"], a[href*="/videos/"], a[href*="/watch/"], a[href*="permalink"]'
+            'a[href*="/posts/"], a[href*="/photo/"], a[href*="/videos/"], a[href*="/reel/"], a[href*="/watch/"], a[href*="permalink"]'
           )
           let link = ''
           for (const a of linkEls) {
@@ -407,6 +476,10 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
             if (isCommentLink(candidate)) continue
             link = candidate
             if (link) break
+          }
+          if (!link) {
+            const fallbackLink = element.querySelector('a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"], a[href*="/watch/"], a[href*="permalink"]')
+            link = resolveUrl(fallbackLink?.getAttribute('href') || '')
           }
           const timeEl = element.querySelector('time, a[href*="/posts/"] span, a[href*="/videos/"] span, a[href*="/watch/"] span')
           const date = timeEl?.getAttribute('datetime') || timeEl?.textContent?.trim() || undefined
@@ -430,6 +503,24 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
           }
         }
 
+        // Facebook frequently changes the internal dir/aria structure. Keep
+        // a minimal article parser so visible posts are not discarded when
+        // those selectors change.
+        if (results.length === 0) {
+          for (const article of document.querySelectorAll('[role="article"]')) {
+            const text = ((article as HTMLElement).innerText || '')
+              .replace(/\s+/g, ' ')
+              .replace(/Ver más|Ver mas|Ver menos/gi, '')
+              .trim()
+            const anchor = article.querySelector('a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"], a[href*="/stories/"], a[href*="/photo/"]')
+            const link = resolveUrl(anchor?.getAttribute('href') || '')
+            const image = bestImage(article)
+            const hasVideo = Boolean(article.querySelector('video, a[href*="/reel/"], a[href*="/videos/"], a[href*="/watch/"]'))
+            if (!text || !link || isCommentLink(link)) continue
+            results.push({ text, image, link, mediaType: hasVideo ? 'video' : image ? 'image' : 'text' })
+          }
+        }
+
         return results
       })
 
@@ -441,7 +532,37 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
       }
     }
 
+    async function collectSimpleVisibleArticles() {
+      const articles = await page.locator('[role="article"]').evaluateAll((elements) => elements.map((element) => {
+        const text = (element as HTMLElement).innerText
+          .replace(/\s+/g, ' ')
+          .replace(/Ver más|Ver mas|Ver menos/gi, '')
+          .trim()
+        const linkElement = element.querySelector('a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"], a[href*="/stories/"], a[href*="/photo/"]')
+        const href = linkElement?.getAttribute('href') || ''
+        const image = element.querySelector('img[src*="scontent"], img[src*="fbcdn"]')?.getAttribute('src') || undefined
+        const mediaType = element.querySelector('video, a[href*="/reel/"], a[href*="/videos/"], a[href*="/watch/"]')
+          ? 'video' as const
+          : image ? 'image' as const : 'text' as const
+        return { text, href, image, mediaType }
+      }))
+
+      for (const article of articles) {
+        if (!article.text || !article.href) continue
+        const link = article.href.startsWith('/') ? `https://www.facebook.com${article.href}` : article.href
+        if (seenPosts.has(link) || isCommentLink(link)) continue
+        seenPosts.add(link)
+        collectedPosts.push({
+          text: article.text,
+          image: article.image,
+          link,
+          mediaType: article.mediaType
+        })
+      }
+    }
+
     await collectVisiblePosts()
+    if (collectedPosts.length === 0) await collectSimpleVisibleArticles()
 
     let roundsWithoutNewPosts = 0
     for (let i = 0; i < 4; i++) {

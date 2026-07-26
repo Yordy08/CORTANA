@@ -244,9 +244,9 @@ export default defineEventHandler(async (event) => {
   // Store new posts
   const newPosts = await addNewPosts(uniqueCandidates, 'web')
   const allPosts = await getStoredPosts('web')
-  const dailyPosts = allPosts.filter(isInsideTodayWindow)
+  const recentPosts = allPosts.filter(isInsideTodayWindow)
 
-  const items: WebItem[] = dailyPosts.slice(0, 80).map((post) => ({
+  const items: WebItem[] = recentPosts.slice(0, 80).map((post) => ({
     id: post.id,
     title: post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),

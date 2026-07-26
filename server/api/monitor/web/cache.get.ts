@@ -13,8 +13,13 @@ type WebItem = {
   isNew: boolean
 }
 
+function isRecent(post: { date?: string; detectedAt?: string }) {
+  const timestamp = Date.parse(post.date || post.detectedAt || '')
+  return !Number.isNaN(timestamp) && Date.now() - timestamp <= 24 * 60 * 60 * 1000
+}
+
 export default defineEventHandler(async () => {
-  const posts = await getStoredPosts('web')
+  const posts = (await getStoredPosts('web')).filter(isRecent)
   const items: WebItem[] = posts.slice(0, 80).map((post) => ({
     id: post.id,
     title: post.text.split(':')[0]?.trim() || post.text.slice(0, 60),

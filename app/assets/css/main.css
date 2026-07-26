@@ -34,7 +34,7 @@
   }
 
   .post-card-video {
-    @apply border-purple-400/30 bg-purple-950/20;
+    @apply border-purple-400/30 bg-purple-950/20 opacity-70;
   }
 
   .post-image {

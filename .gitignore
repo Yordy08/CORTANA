@@ -25,3 +25,5 @@ logs
 
 # Scraped data storage
 data/
+
+.vercel

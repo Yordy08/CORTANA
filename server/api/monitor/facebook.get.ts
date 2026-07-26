@@ -116,7 +116,7 @@ function createDisplayId(post: { link?: string; text?: string }, index: number) 
 function inferMediaType(post: { mediaType?: string; link?: string; image?: string }) {
   if (post.mediaType === 'video') return 'video'
   const link = normalizeFacebookLink(post.link).toLowerCase()
-  if (link.includes('/videos/') || link.includes('/watch/')) return 'video'
+  if (link.includes('/videos/') || link.includes('/reel/') || link.includes('/watch/')) return 'video'
   return post.image ? 'image' : 'text'
 }
 
@@ -238,9 +238,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link proporcionado no es una URL válida de Facebook.' })
   }
 
-  const OVERALL_TIMEOUT = 10000
+  // Keep failed checks short. Current data is more useful than a long request.
+  const OVERALL_TIMEOUT = process.env.VERCEL ? 10000 : 30000
 
-  // Race the scraper against a timeout — if it takes too long, return cached data
+  // Race the scraper against a timeout so the UI does not remain blocked.
   const result = await Promise.race([
     scrapeFacebookPage(pageUrl),
     new Promise<{ posts: []; error: string }>((_, reject) =>
@@ -259,9 +260,23 @@ export default defineEventHandler(async (event) => {
 
   const allPosts = await getStoredPosts('facebook')
 
+  // Never present persisted Facebook data as current when the source could
+  // not be read in this request.
+  if (cleanedPosts.length === 0) {
+    return {
+      items: [],
+      source: 'facebook',
+      totalStored: allPosts.length,
+      newDetected: 0,
+      message: `No se pudieron leer publicaciones actuales de Facebook. ${result.error || ''}`.trim()
+    }
+  }
+
   const seen = new Set<string>()
-  const dailyPosts = allPosts.filter((post) => isInsideTodayWindow(post) && !isFacebookCommentLink(post.link))
-  const items: DisplayItem[] = dailyPosts.filter((post) => {
+  // Use detection time for Facebook because its displayed dates are often
+  // localized and may refer to an older publication.
+  const recentPosts = allPosts.filter((post) => isInsideTodayWindow(post) && !isFacebookCommentLink(post.link))
+  const items: DisplayItem[] = recentPosts.filter((post) => {
     const key = getPublicationKey(post)
     if (!key) return false
     if (seen.has(key)) return false
