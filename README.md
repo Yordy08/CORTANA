@@ -80,3 +80,6 @@ For reliable current Facebook posts, configure `FACEBOOK_ACCESS_TOKEN` (or
 `FACEBOOK_PAGE_ACCESS_TOKEN`) and the numeric `FACEBOOK_PAGE_ID` in the
 deployment environment. The application uses the Graph API first and the
 public HTML scraper only as a fallback.
+
+For corrections to synchronize between users on Vercel, connect Vercel KV or
+Upstash Redis and configure `KV_REST_API_URL` and `KV_REST_API_TOKEN`.

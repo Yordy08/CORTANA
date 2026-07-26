@@ -3,10 +3,18 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { Redis } from '@upstash/redis'
 import { getStoredPosts, type ScrapedPost } from './storage'
 
 const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(process.cwd(), 'data')
 const CORRECTIONS_FILE = join(DATA_DIR, 'corrections.json')
+const CORRECTIONS_KEY = 'cortana:corrections'
+
+const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
+const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
+const sharedStore = redisUrl && redisToken
+  ? new Redis({ url: redisUrl, token: redisToken })
+  : null
 
 export interface PostCorrection {
   id: string
@@ -27,6 +35,14 @@ async function ensureDataDir() {
 }
 
 async function readCorrections(): Promise<PostCorrection[]> {
+  if (sharedStore) {
+    try {
+      return (await sharedStore.get<PostCorrection[]>(CORRECTIONS_KEY)) || []
+    } catch {
+      return []
+    }
+  }
+
   try {
     if (!existsSync(CORRECTIONS_FILE)) return []
     const raw = await readFile(CORRECTIONS_FILE, 'utf-8')
@@ -37,6 +53,11 @@ async function readCorrections(): Promise<PostCorrection[]> {
 }
 
 async function writeCorrections(corrections: PostCorrection[]) {
+  if (sharedStore) {
+    await sharedStore.set(CORRECTIONS_KEY, corrections)
+    return
+  }
+
   await ensureDataDir()
   await writeFile(CORRECTIONS_FILE, JSON.stringify(corrections, null, 2), 'utf-8')
 }
