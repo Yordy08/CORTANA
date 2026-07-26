@@ -26,6 +26,7 @@ type Correction = {
   postId: string
   source: 'facebook' | 'web'
   field: string
+  currentValue?: string
   suggestedValue: string
   status: 'pending' | 'done'
   createdAt: string
@@ -57,6 +58,7 @@ const newCount = ref(0)
 const lastCheckedAt = ref('')
 const syncing = ref(false)
 const corrections = ref<Correction[]>([])
+const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
 const suggestField = ref('category')
 const suggestValue = ref('')
@@ -79,9 +81,28 @@ function correctionsFor(itemId: string) {
 
 async function fetchCorrections() {
   try {
-    const res = await $fetch<{ corrections: Correction[] }>('/api/corrections/list')
-    corrections.value = res.corrections
+    const res = await $fetch<{ corrections: Correction[] }>('/api/corrections/list', {
+      query: { _t: Date.now() },
+      cache: 'no-store'
+    })
+    // Do not lose a visible pending notice on a transient empty response.
+    if (res.corrections.length > 0 || corrections.value.length === 0) {
+      corrections.value = res.corrections
+    }
   } catch {}
+}
+
+function correctionPost(correction: Correction) {
+  const items = correction.source === 'facebook' ? facebookItems.value : websiteItems.value
+  return items.find((item) => item.id === correction.postId)
+}
+
+function openCorrections() {
+  showCorrections.value = true
+}
+
+function closeCorrections() {
+  showCorrections.value = false
 }
 
 function openSuggest(item: MonitorItem, source: 'facebook' | 'web') {
@@ -122,6 +143,7 @@ async function applyCorrection(correctionId: string) {
       body: { correctionId }
     }) as any
     corrections.value = corrections.value.filter((c) => c.id !== correctionId)
+    if (corrections.value.length === 0) showCorrections.value = false
     const updatedPost = res.updatedPost as { id: string; category?: string } | undefined
     if (updatedPost?.id && res.correction?.field === 'category') {
       let idx = facebookItems.value.findIndex((i) => i.id === updatedPost.id)
@@ -488,9 +510,13 @@ function formatDate(isoOrLocale: string | undefined): string {
           </span>
           <span
             v-if="corrections.length > 0"
-            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 text-xs font-semibold ring-1 ring-yellow-400/30 animate-pulse"
-          >
-            {{ corrections.length }} corrección pendiente
+             class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 text-xs font-semibold ring-1 ring-yellow-400/30 cursor-pointer hover:bg-yellow-500/30"
+             role="button"
+             tabindex="0"
+             @click="openCorrections"
+             @keyup.enter="openCorrections"
+           >
+             {{ corrections.length }} {{ corrections.length === 1 ? 'corrección pendiente' : 'correcciones pendientes' }}
           </span>
         </div>
 
@@ -725,9 +751,50 @@ function formatDate(isoOrLocale: string | undefined): string {
             </div>
           </template>
 
-        </div>
+         </div>
 
-        <!-- Suggest Correction Modal -->
+         <!-- Pending corrections -->
+         <div
+           v-if="showCorrections"
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+           @click.self="closeCorrections"
+         >
+           <div class="glass-card p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto space-y-4">
+             <div class="flex items-center justify-between">
+               <h3 class="text-lg font-semibold">Correcciones pendientes</h3>
+               <button class="text-muted hover:text-white text-xl" @click="closeCorrections">✕</button>
+             </div>
+             <article
+               v-for="correction in corrections"
+               :key="correction.id"
+               class="rounded-2xl border border-yellow-400/25 bg-yellow-500/10 p-4 space-y-2"
+             >
+               <div class="flex items-center justify-between gap-3 text-xs text-yellow-200">
+                 <span>{{ correction.source === 'facebook' ? 'Facebook' : 'Web' }} · {{ correction.field }}</span>
+                 <span>{{ formatDate(correction.createdAt) }}</span>
+               </div>
+               <p class="text-sm text-white/90">
+                 {{ correctionPost(correction)?.context || 'La publicación ya no está cargada en la vista actual.' }}
+               </p>
+               <p class="text-xs text-yellow-200">
+                 Sugerencia: <strong>{{ correction.suggestedValue }}</strong>
+               </p>
+               <div class="flex justify-end gap-2">
+                 <button
+                   class="btn-secondary text-xs !px-3 !py-1.5"
+                   @click="activeView = correction.source === 'facebook' ? 'facebook' : 'web'; closeCorrections()"
+                 >
+                   Ver publicación
+                 </button>
+                 <button class="btn-primary text-xs !px-3 !py-1.5" @click="applyCorrection(correction.id)">
+                   Aplicar
+                 </button>
+               </div>
+             </article>
+           </div>
+         </div>
+
+         <!-- Suggest Correction Modal -->
         <div
           v-if="suggestItem"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
