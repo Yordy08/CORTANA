@@ -43,6 +43,27 @@ async function writeCorrections(corrections: PostCorrection[]) {
 
 export async function getPendingCorrections(): Promise<PostCorrection[]> {
   const all = await readCorrections()
+  let changed = false
+
+  for (const correction of all) {
+    if (correction.status !== 'pending') continue
+
+    const posts = await getStoredPosts(correction.source)
+    const post = posts.find((item) => item.id === correction.postId)
+    const currentValue = correction.field === 'category'
+      ? post?.category
+      : correction.field === 'title'
+        ? post?.leadText
+        : undefined
+
+    if (currentValue && currentValue.trim() === correction.suggestedValue.trim()) {
+      correction.status = 'done'
+      correction.resolvedAt = new Date().toISOString()
+      changed = true
+    }
+  }
+
+  if (changed) await writeCorrections(all)
   return all.filter((c) => c.status === 'pending')
 }
 

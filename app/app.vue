@@ -137,13 +137,16 @@ async function submitSuggestion() {
 }
 
 async function applyCorrection(correctionId: string) {
+  // Remove it immediately from both Apply buttons; the server also marks it
+  // resolved so it will not return on the next polling cycle.
+  corrections.value = corrections.value.filter((c) => c.id !== correctionId)
+  if (corrections.value.length === 0) showCorrections.value = false
+
   try {
     const res = await $fetch('/api/corrections/resolve', {
       method: 'POST',
       body: { correctionId }
     }) as any
-    corrections.value = corrections.value.filter((c) => c.id !== correctionId)
-    if (corrections.value.length === 0) showCorrections.value = false
     const updatedPost = res.updatedPost as { id: string; category?: string } | undefined
     if (updatedPost?.id && res.correction?.field === 'category') {
       let idx = facebookItems.value.findIndex((i) => i.id === updatedPost.id)
