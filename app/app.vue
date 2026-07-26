@@ -695,7 +695,9 @@ function formatDate(isoOrLocale: string | undefined): string {
                 <div class="p-4 space-y-2">
                   <div class="source-buttons">
                     <span class="source-pill source-pill-ok">WEB</span>
-                    <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-missing'">Facebook</span>
+                   <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-waiting'">
+                     {{ existsInFacebook(item) ? 'Facebook' : 'Facebook · esperando' }}
+                   </span>
                   </div>
 
                   <div v-if="correctionsFor(item.id).length" class="flex flex-wrap gap-2">

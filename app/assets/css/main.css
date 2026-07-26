@@ -106,6 +106,10 @@
     @apply bg-red-500/20 text-red-300 ring-1 ring-red-400/30;
   }
 
+  .source-pill-waiting {
+    @apply bg-yellow-500/15 text-yellow-200 ring-1 ring-yellow-400/30;
+  }
+
   .category-pill {
     @apply inline-flex w-fit items-center rounded-full bg-yellow-500/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-yellow-200 ring-1 ring-yellow-400/25;
   }
