@@ -124,7 +124,7 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 
 async function fetchWordPressCandidates(baseUrl: URL) {
   const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
-  apiUrl.searchParams.set('per_page', '30')
+  apiUrl.searchParams.set('per_page', '100')
   apiUrl.searchParams.set('_embed', '1')
 
   const response = await fetch(apiUrl, {
@@ -141,7 +141,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   const todayPosts = posts.filter(isInsideTodayWindow)
   const selectedPosts = todayPosts.length ? todayPosts : posts
 
-  return selectedPosts.slice(0, 30).map((post) => {
+  return selectedPosts.slice(0, 100).map((post) => {
     const title = cleanText(post.title?.rendered)
     const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
     const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
@@ -244,9 +244,11 @@ export default defineEventHandler(async (event) => {
   // Store new posts
   const newPosts = await addNewPosts(uniqueCandidates, 'web')
   const allPosts = await getStoredPosts('web')
-  const recentPosts = allPosts.filter(isInsideTodayWindow)
+  const recentPosts = allPosts
+    .filter(isInsideTodayWindow)
+    .sort((a, b) => Date.parse(b.date || b.detectedAt) - Date.parse(a.date || a.detectedAt))
 
-  const items: WebItem[] = recentPosts.slice(0, 80).map((post) => ({
+  const items: WebItem[] = recentPosts.slice(0, 100).map((post) => ({
     id: post.id,
     title: post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
