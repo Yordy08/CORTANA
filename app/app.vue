@@ -62,6 +62,7 @@ const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
 const suggestField = ref('category')
 const suggestValue = ref('')
+const suggestMode = ref<'choose' | 'error' | 'category'>('choose')
 
 const CATEGORIES = [
   'Ambiente',
@@ -74,6 +75,15 @@ const CATEGORIES = [
   'Política Nación',
   'Política Región',
 ]
+
+const CORRECTION_FIELDS = [
+  { value: 'category', label: 'Categoría' },
+  { value: 'title', label: 'Titular corrido' },
+  { value: 'image', label: 'Imagen equivocada' },
+  { value: 'text', label: 'Texto equivocado' },
+  { value: 'delete', label: 'Eliminar publicación' }
+]
+const ERROR_FIELDS = CORRECTION_FIELDS.filter((field) => field.value !== 'category')
 
 function correctionsFor(itemId: string) {
   return corrections.value.filter((c) => c.postId === itemId && c.status === 'pending')
@@ -106,18 +116,44 @@ function closeCorrections() {
 
 function openSuggest(item: MonitorItem, source: 'facebook' | 'web') {
   suggestItem.value = { item, source }
+  suggestMode.value = 'choose'
   suggestField.value = 'category'
   suggestValue.value = item.category || ''
 }
 
+function chooseSuggestMode(mode: 'error' | 'category') {
+  suggestMode.value = mode
+  suggestField.value = mode === 'category' ? 'category' : ERROR_FIELDS[0].value
+  suggestValue.value = ''
+  if (mode === 'error') changeSuggestField()
+}
+
 function closeSuggest() {
   suggestItem.value = null
+  suggestMode.value = 'choose'
   suggestField.value = 'category'
   suggestValue.value = ''
 }
 
+function getCorrectionValue(item: MonitorItem, field: string) {
+  if (field === 'category') return item.category || ''
+  if (field === 'title') return item.title || ''
+  if (field === 'image') return item.image || ''
+  if (field === 'text') return item.fullText || item.context
+  return ''
+}
+
+function changeSuggestField() {
+  if (suggestMode.value === 'error') {
+    suggestValue.value = ERROR_FIELDS.find((field) => field.value === suggestField.value)?.label || ''
+    return
+  }
+
+  suggestValue.value = suggestItem.value ? getCorrectionValue(suggestItem.value.item, suggestField.value) : ''
+}
+
 async function submitSuggestion() {
-  if (!suggestItem.value || !suggestValue.value.trim()) return
+  if (!suggestItem.value || (suggestMode.value === 'category' && !suggestValue.value.trim())) return
   const { item, source } = suggestItem.value
   try {
     await $fetch('/api/corrections/create', {
@@ -126,8 +162,8 @@ async function submitSuggestion() {
         postId: item.id,
         source,
         field: suggestField.value,
-        currentValue: item.category || '',
-        suggestedValue: suggestValue.value.trim()
+        currentValue: getCorrectionValue(item, suggestField.value),
+        suggestedValue: suggestValue.value.trim() || 'Error reportado'
       }
     })
     await fetchCorrections()
@@ -147,14 +183,18 @@ async function applyCorrection(correctionId: string) {
       body: { correctionId }
     }) as any
     const updatedPost = res.updatedPost as { id: string; category?: string } | undefined
-    if (updatedPost?.id && res.correction?.field === 'category') {
+    if (updatedPost?.id) {
+      const field = res.correction?.field
+      const value = res.correction?.suggestedValue
       let idx = facebookItems.value.findIndex((i) => i.id === updatedPost.id)
       if (idx !== -1) {
-        facebookItems.value[idx] = { ...facebookItems.value[idx], category: res.correction.suggestedValue }
+        if (field === 'delete') facebookItems.value.splice(idx, 1)
+        else if (field === 'category') facebookItems.value[idx] = { ...facebookItems.value[idx], category: value }
       }
       idx = websiteItems.value.findIndex((i) => i.id === updatedPost.id)
       if (idx !== -1) {
-        websiteItems.value[idx] = { ...websiteItems.value[idx], category: res.correction.suggestedValue }
+        if (field === 'delete') websiteItems.value.splice(idx, 1)
+        else if (field === 'category') websiteItems.value[idx] = { ...websiteItems.value[idx], category: value }
       }
     }
   } catch {}
@@ -815,40 +855,40 @@ function formatDate(isoOrLocale: string | undefined): string {
               <p class="text-xs">Publicación:</p>
               <p class="text-white line-clamp-2">{{ suggestItem.item.context }}</p>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-muted mb-1.5">Campo a corregir</label>
-              <select
-                v-model="suggestField"
-                class="input-field text-sm"
-              >
-                <option value="category">Categoría</option>
-                <option value="title">Título</option>
-              </select>
-            </div>
-            <div v-if="suggestField === 'category'">
-              <label class="block text-xs font-medium text-muted mb-1.5">Nueva categoría</label>
-              <select
+             <div v-if="suggestMode === 'choose'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+               <button class="btn-secondary min-h-20" @click="chooseSuggestMode('error')">
+                 Hay un error
+               </button>
+               <button class="btn-primary min-h-20" @click="chooseSuggestMode('category')">
+                 Cambiar categoría
+               </button>
+             </div>
+             <template v-else>
+               <div v-if="suggestMode === 'error'">
+                 <label class="block text-xs font-medium text-muted mb-1.5">Tipo de error</label>
+                 <select v-model="suggestField" class="input-field text-sm" @change="changeSuggestField">
+                   <option v-for="field in ERROR_FIELDS" :key="field.value" :value="field.value">
+                     {{ field.label }}
+                   </option>
+                 </select>
+               </div>
+               <div v-if="suggestMode === 'category' || suggestField === 'category'">
+               <label class="block text-xs font-medium text-muted mb-1.5">Nueva categoría</label>
+               <select
                 v-model="suggestValue"
                 class="input-field text-sm !text-white !bg-white/20" style="color-scheme: dark"
               >
                 <option value="" disabled selected>Seleccionar categoría...</option>
-                <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
-              </select>
-            </div>
-            <div v-else>
-              <label class="block text-xs font-medium text-muted mb-1.5">Nuevo título</label>
-              <input
-                v-model="suggestValue"
-                class="input-field text-sm"
-                placeholder="Escribe el nuevo título..."
-                @keyup.enter="submitSuggestion"
-              >
-            </div>
+                 <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
+               </select>
+             </div>
+             </template>
             <div class="flex gap-3 justify-end pt-2">
               <button class="btn-secondary text-sm" @click="closeSuggest">Cancelar</button>
-              <button
-                class="btn-primary text-sm"
-                :disabled="!suggestValue.trim()"
+               <button
+                 v-if="suggestMode !== 'choose'"
+                 class="btn-primary text-sm"
+                  :disabled="suggestMode === 'category' && !suggestValue.trim()"
                 @click="submitSuggestion"
               >
                 Enviar sugerencia

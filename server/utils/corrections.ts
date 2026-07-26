@@ -73,9 +73,13 @@ export async function getPendingCorrections(): Promise<PostCorrection[]> {
     const post = posts.find((item) => item.id === correction.postId)
     const currentValue = correction.field === 'category'
       ? post?.category
-      : correction.field === 'title'
-        ? post?.leadText
-        : undefined
+        : correction.field === 'title'
+          ? post?.leadText
+          : correction.field === 'image'
+            ? post?.image
+            : correction.field === 'text'
+              ? post?.text
+          : undefined
 
     if (currentValue && currentValue.trim() === correction.suggestedValue.trim()) {
       correction.status = 'done'
@@ -135,10 +139,10 @@ export async function resolveCorrection(correctionId: string): Promise<{ correct
   if (postIdx === -1) return { correction: resolved }
 
   const post = posts[postIdx]
-  if (resolved.field === 'category') {
+  if (resolved.field === 'delete') {
+    posts.splice(postIdx, 1)
+  } else if (resolved.field === 'category') {
     post.category = resolved.suggestedValue
-  } else if (resolved.field === 'title') {
-    post.leadText = resolved.suggestedValue
   }
 
   const filePath = resolved.source === 'facebook'
@@ -147,5 +151,5 @@ export async function resolveCorrection(correctionId: string): Promise<{ correct
 
   await writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8')
 
-  return { correction: resolved, updatedPost: post }
+  return { correction: resolved, updatedPost: resolved.field === 'delete' ? { ...post, id: resolved.postId } : post }
 }
