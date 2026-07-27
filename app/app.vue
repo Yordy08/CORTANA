@@ -748,7 +748,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                 <div v-if="item.image" class="relative">
                   <img
                     class="post-image"
-                    :src="item.image"
+                    :src="isWebsiteUrl(item.image) ? `/api/proxy/image?url=${encodeURIComponent(item.image)}` : item.image"
                     alt="Imagen de publicación web"
                     loading="lazy"
                   >

@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'La URL de la imagen no es válida.' })
   }
 
-  const allowedHosts = ['fbcdn.net', 'scontent']
+  const allowedHosts = ['fbcdn.net', 'scontent', 'burbujapolitica.com']
   if (!allowedHosts.some((host) => parsedUrl.hostname.includes(host))) {
     throw createError({ statusCode: 400, statusMessage: 'Dominio de imagen no permitido.' })
   }
