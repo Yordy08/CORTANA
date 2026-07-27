@@ -214,8 +214,10 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Always render fresh API responses. Do not restore browser/session cache.
-  setTimeout(() => refreshAll(false), 0)
+  // Render the last known posts immediately while the live monitor updates in
+  // the background.
+  loadCachedPosts()
+  setTimeout(() => refreshAll(true), 0)
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
 
@@ -224,6 +226,25 @@ onMounted(() => {
     refreshAll(true)
   }, AUTO_REFRESH_MS)
 })
+
+async function loadCachedPosts() {
+  try {
+    const [facebookCache, webCache] = await Promise.all([
+      $fetch<MonitorResponse>('/api/monitor/facebook/cache'),
+      $fetch<MonitorResponse>('/api/monitor/web/cache')
+    ])
+
+    // Do not replace a live response that arrived before the cache request.
+    if (!facebookItems.value.length && facebookCache.items?.length) {
+      facebookItems.value = facebookCache.items
+    }
+    if (!websiteItems.value.length && webCache.items?.length) {
+      websiteItems.value = webCache.items
+    }
+  } catch {
+    // The live request still runs if the cache is unavailable.
+  }
+}
 
 onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)

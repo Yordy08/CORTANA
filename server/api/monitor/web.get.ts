@@ -124,7 +124,10 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 
 async function fetchWordPressCandidates(baseUrl: URL) {
   const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
-  apiUrl.searchParams.set('per_page', '100')
+  // Only request fields used by the monitor. The full embedded response is
+  // unnecessarily large and makes every refresh wait several seconds.
+  apiUrl.searchParams.set('per_page', '30')
+  apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded')
   apiUrl.searchParams.set('_embed', '1')
 
   const response = await fetch(apiUrl, {
@@ -132,7 +135,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
       'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
       accept: 'application/json'
     },
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(8000)
   })
 
   if (!response.ok) return []
@@ -182,7 +185,7 @@ export default defineEventHandler(async (event) => {
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CortanaMonitor/2.0',
         accept: 'text/html,application/xhtml+xml'
       },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(8000)
     })
 
     if (!response.ok) {
