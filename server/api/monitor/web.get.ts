@@ -131,11 +131,14 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   // included alongside `_embedded`.
   apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
   apiUrl.searchParams.set('_embed', '1')
+  apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
 
   const response = await fetch(apiUrl, {
     headers: {
       'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
-      accept: 'application/json'
+      accept: 'application/json',
+      'cache-control': 'no-cache',
+      pragma: 'no-cache'
     },
     signal: AbortSignal.timeout(8000)
   })

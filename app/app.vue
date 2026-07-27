@@ -204,7 +204,7 @@ async function applyCorrection(correctionId: string) {
 let checkInterval: ReturnType<typeof setInterval> | null = null
 let correctionInterval: ReturnType<typeof setInterval> | null = null
 // Keep the monitor responsive while avoiding overlapping scrapes.
-const AUTO_REFRESH_MS = 15000
+const AUTO_REFRESH_MS = 5000
 const FACEBOOK_REFRESH_MS = 15000
 const lastFacebookSyncAt = ref(0)
 
@@ -221,7 +221,7 @@ onMounted(() => {
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
 
-  // Auto-check Facebook and web every minute.
+  // Check the web frequently; Facebook remains on a less aggressive interval.
   checkInterval = setInterval(() => {
     refreshAll(true)
   }, AUTO_REFRESH_MS)
