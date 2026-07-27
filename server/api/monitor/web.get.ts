@@ -127,7 +127,9 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   // Only request fields used by the monitor. The full embedded response is
   // unnecessarily large and makes every refresh wait several seconds.
   apiUrl.searchParams.set('per_page', '30')
-  apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded')
+  // `_links` is required by WordPress for the requested embedded media to be
+  // included alongside `_embedded`.
+  apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
   apiUrl.searchParams.set('_embed', '1')
 
   const response = await fetch(apiUrl, {
