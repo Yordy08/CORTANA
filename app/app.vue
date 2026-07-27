@@ -450,10 +450,11 @@ function triggerNotification(title: string, body: string) {
   }
 }
 
-async function copyLink(link = '') {
+async function copyLink(link = '', title = '') {
   if (!link) return
   try {
-    await navigator.clipboard.writeText(link)
+    const text = title ? `${title}\n${link}` : link
+    await navigator.clipboard.writeText(text)
     // Brief visual feedback via the button text
     const btn = document.activeElement
     if (btn) {
@@ -769,7 +770,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <button
                       v-if="item.link"
                       class="btn-primary text-xs !px-3 !py-1.5"
-                      @click="copyLink(item.link)"
+                      @click="copyLink(item.link, item.title || 'Publicación web')"
                     >
                       Copiar enlace
                     </button>
