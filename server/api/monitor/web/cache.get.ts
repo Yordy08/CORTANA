@@ -22,7 +22,7 @@ export default defineEventHandler(async () => {
   const posts = (await getStoredPosts('web')).filter(isRecent)
   const items: WebItem[] = posts.slice(0, 80).map((post) => ({
     id: post.id,
-    title: post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
+    title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
     fullText: post.fullText || post.text,
     leadText: post.leadText,

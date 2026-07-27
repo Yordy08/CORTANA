@@ -156,6 +156,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
     const leadText = getFirstParagraph(post.content?.rendered || post.excerpt?.rendered)
 
     return {
+      title,
       image: getWordPressImage(post),
       text: title ? `${title}: ${excerpt || 'Sin descripción disponible.'}` : excerpt,
       fullText: title ? `${title}: ${fullText || excerpt || 'Sin descripción disponible.'}` : fullText || excerpt,
@@ -182,7 +183,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link de la web no es válido.' })
   }
 
-  let candidates: Array<{ image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
+  let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
 
   if (candidates.length === 0) {
     const response = await fetch(parsedUrl.toString(), {
@@ -212,6 +213,7 @@ export default defineEventHandler(async (event) => {
 
       if (text && text.length > 20) {
         candidates.push({
+          title,
           text: title ? `${title}: ${text}` : text,
           fullText: title ? `${title}: ${text}` : text,
           leadText: text,
@@ -229,6 +231,7 @@ export default defineEventHandler(async (event) => {
 
       if (title || description) {
         candidates.push({
+          title,
           text: title ? `${title} — ${description || 'Sin descripción'}` : description,
           fullText: title ? `${title} — ${description || 'Sin descripción'}` : description,
           leadText: description,
@@ -258,7 +261,7 @@ export default defineEventHandler(async (event) => {
 
   const items: WebItem[] = recentPosts.slice(0, 100).map((post) => ({
     id: post.id,
-    title: post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
+    title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
     fullText: post.fullText || post.text,
     leadText: post.leadText,

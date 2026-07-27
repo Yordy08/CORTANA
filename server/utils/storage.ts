@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 
 export interface ScrapedPost {
   id: string
+  title?: string
   image?: string
   text: string
   fullText?: string
@@ -116,6 +117,7 @@ export async function hasPost(link: string, source: Source): Promise<boolean> {
 
 export async function addNewPosts(
   candidates: Array<{
+    title?: string
     image?: string
     text: string
     fullText?: string
@@ -144,6 +146,10 @@ export async function addNewPosts(
 
         if (candidate.text && candidate.text.length > existingPost.text.length) {
           existingPost.text = candidate.text
+          changed = true
+        }
+        if (candidate.title && existingPost.title !== candidate.title) {
+          existingPost.title = candidate.title
           changed = true
         }
         if (candidate.fullText && existingPost.fullText !== candidate.fullText) {
@@ -179,6 +185,7 @@ export async function addNewPosts(
 
     const post: ScrapedPost = {
       id: generateId(candidate.link || candidate.text, source),
+      title: candidate.title,
       image: candidate.image,
       text: candidate.text || '(Sin texto disponible)',
       fullText: candidate.fullText,
