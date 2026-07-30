@@ -74,7 +74,6 @@ const corrections = ref<Correction[]>([])
 const publishedXPostIds = ref<string[]>([])
 const currentUser = ref<UserId>('1')
 const notifications = ref<UserNotification[]>([])
-const notificationMessage = ref('')
 const showNotificationPanel = ref(false)
 const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
@@ -317,8 +316,7 @@ async function fetchNotifications() {
   } catch {}
 }
 
-async function sendNotification() {
-  const message = notificationMessage.value.trim()
+async function sendNotification(message: string) {
   if (!message) return
 
   try {
@@ -326,7 +324,6 @@ async function sendNotification() {
       method: 'POST',
       body: { sender: currentUser.value, message }
     })
-    notificationMessage.value = ''
     showNotificationPanel.value = false
   } catch {}
 }
@@ -693,18 +690,10 @@ function formatDate(isoOrLocale: string | undefined): string {
               <h3 class="text-lg font-semibold">Enviar notificación</h3>
               <button class="text-muted hover:text-white text-xl" @click="showNotificationPanel = false">✕</button>
             </div>
-            <textarea
-              v-model="notificationMessage"
-              class="input-field min-h-28 resize-y text-sm"
-              placeholder="Escribe un mensaje..."
-              maxlength="500"
+            <NotificationComposer
+              @send="sendNotification"
+              @cancel="showNotificationPanel = false"
             />
-            <div class="flex justify-end gap-3">
-              <button class="btn-secondary text-sm" @click="showNotificationPanel = false">Cancelar</button>
-              <button class="btn-primary text-sm" :disabled="!notificationMessage.trim()" @click="sendNotification">
-                Enviar
-              </button>
-            </div>
           </div>
         </div>
 
