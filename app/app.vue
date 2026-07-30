@@ -32,6 +32,19 @@ type Correction = {
   createdAt: string
 }
 
+type UserId = '1' | '2'
+
+type UserNotification = {
+  id: string
+  sender: UserId
+  recipient: UserId
+  message: string
+  createdAt: string
+  readAt?: string
+  recipientAcknowledgedAt?: string
+  senderAcknowledgedAt?: string
+}
+
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
 
@@ -59,6 +72,10 @@ const lastCheckedAt = ref('')
 const syncing = ref(false)
 const corrections = ref<Correction[]>([])
 const publishedXPostIds = ref<string[]>([])
+const currentUser = ref<UserId>('1')
+const notifications = ref<UserNotification[]>([])
+const notificationMessage = ref('')
+const showNotificationPanel = ref(false)
 const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
 const suggestField = ref('category')
@@ -205,12 +222,16 @@ async function applyCorrection(correctionId: string) {
 let checkInterval: ReturnType<typeof setInterval> | null = null
 let correctionInterval: ReturnType<typeof setInterval> | null = null
 let publishedXInterval: ReturnType<typeof setInterval> | null = null
+let notificationInterval: ReturnType<typeof setInterval> | null = null
 // Keep the monitor responsive while avoiding overlapping scrapes.
 const AUTO_REFRESH_MS = 5000
 const FACEBOOK_REFRESH_MS = 15000
 const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {
+  const savedUser = window.localStorage.getItem('cortana-user-id')
+  if (savedUser === '1' || savedUser === '2') currentUser.value = savedUser
+
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault()
     installPrompt.value = event
@@ -224,6 +245,8 @@ onMounted(() => {
   correctionInterval = setInterval(fetchCorrections, 3000)
   fetchPublishedX()
   publishedXInterval = setInterval(fetchPublishedX, 3000)
+  fetchNotifications()
+  notificationInterval = setInterval(fetchNotifications, 3000)
 
   // Check the web frequently; Facebook remains on a less aggressive interval.
   checkInterval = setInterval(() => {
@@ -254,6 +277,7 @@ onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)
   if (correctionInterval) clearInterval(correctionInterval)
   if (publishedXInterval) clearInterval(publishedXInterval)
+  if (notificationInterval) clearInterval(notificationInterval)
 })
 
 async function fetchPublishedX() {
@@ -268,6 +292,53 @@ async function fetchPublishedX() {
 
 function isPublishedOnX(postId: string) {
   return publishedXPostIds.value.includes(postId)
+}
+
+const pendingNotification = computed(() => notifications.value.find((notification) =>
+  notification.recipient === currentUser.value && !notification.recipientAcknowledgedAt
+))
+
+const readNotification = computed(() => notifications.value.find((notification) =>
+  notification.sender === currentUser.value && notification.readAt && !notification.senderAcknowledgedAt
+))
+
+function changeCurrentUser() {
+  window.localStorage.setItem('cortana-user-id', currentUser.value)
+  fetchNotifications()
+}
+
+async function fetchNotifications() {
+  try {
+    const response = await $fetch<{ notifications: UserNotification[] }>('/api/notifications', {
+      query: { user: currentUser.value, _t: Date.now() },
+      cache: 'no-store'
+    })
+    notifications.value = response.notifications
+  } catch {}
+}
+
+async function sendNotification() {
+  const message = notificationMessage.value.trim()
+  if (!message) return
+
+  try {
+    await $fetch('/api/notifications', {
+      method: 'POST',
+      body: { sender: currentUser.value, message }
+    })
+    notificationMessage.value = ''
+    showNotificationPanel.value = false
+  } catch {}
+}
+
+async function acknowledgeNotification(notification: UserNotification) {
+  try {
+    await $fetch('/api/notifications/ack', {
+      method: 'POST',
+      body: { id: notification.id, user: currentUser.value }
+    })
+    await fetchNotifications()
+  } catch {}
 }
 
 async function unmarkPublishedOnX(postId: string) {
@@ -588,17 +659,89 @@ function formatDate(isoOrLocale: string | undefined): string {
                 Cortana Monitor
               </h1>
             </div>
-            <button
-              v-if="installPrompt"
-              class="btn-primary whitespace-nowrap"
-              @click="installApp"
-            >
-              📲 Instalar app
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <select
+                v-model="currentUser"
+                class="input-field !w-auto text-sm"
+                aria-label="Usuario actual"
+                @change="changeCurrentUser"
+              >
+                <option value="1">Usuario 1</option>
+                <option value="2">Usuario 2</option>
+              </select>
+              <button class="btn-secondary whitespace-nowrap" @click="showNotificationPanel = true">
+                Notificar<span v-if="notifications.length" class="ml-1">({{ notifications.length }})</span>
+              </button>
+              <button
+                v-if="installPrompt"
+                class="btn-primary whitespace-nowrap"
+                @click="installApp"
+              >
+                📲 Instalar app
+              </button>
+            </div>
           </div>
         </header>
 
-        <!-- Status Bar -->
+        <!-- Notification composer -->
+        <div
+          v-if="showNotificationPanel"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          @click.self="showNotificationPanel = false"
+        >
+          <div class="glass-card w-full max-w-md space-y-4 p-6">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-semibold">Notificar al Usuario {{ currentUser === '1' ? '2' : '1' }}</h3>
+              <button class="text-muted hover:text-white text-xl" @click="showNotificationPanel = false">✕</button>
+            </div>
+            <textarea
+              v-model="notificationMessage"
+              class="input-field min-h-28 resize-y text-sm"
+              placeholder="Escribe un mensaje..."
+              maxlength="500"
+            />
+            <div class="flex justify-end gap-3">
+              <button class="btn-secondary text-sm" @click="showNotificationPanel = false">Cancelar</button>
+              <button class="btn-primary text-sm" :disabled="!notificationMessage.trim()" @click="sendNotification">
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Incoming notification alert -->
+        <div
+          v-if="pendingNotification"
+          class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+        >
+          <div class="glass-card w-full max-w-md space-y-4 border-accent/40 p-6">
+            <h3 class="text-lg font-semibold">Mensaje del Usuario {{ pendingNotification.sender }}</h3>
+            <p class="whitespace-pre-line rounded-xl bg-white/10 p-4 text-sm leading-relaxed">
+              {{ pendingNotification.message }}
+            </p>
+            <div class="flex justify-end">
+              <button class="btn-primary" @click="acknowledgeNotification(pendingNotification)">OK</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Read confirmation alert -->
+        <div
+          v-else-if="readNotification"
+          class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+        >
+          <div class="glass-card w-full max-w-md space-y-4 border-green-400/40 p-6">
+            <h3 class="text-lg font-semibold text-green-300">Mensaje leído</h3>
+            <p class="text-sm text-muted">
+              El Usuario {{ readNotification.recipient }} leyó tu mensaje.
+            </p>
+            <div class="flex justify-end">
+              <button class="btn-primary" @click="acknowledgeNotification(readNotification)">OK</button>
+            </div>
+          </div>
+        </div>
+
+         <!-- Status Bar -->
         <div class="flex flex-wrap items-center gap-3 mb-6 text-sm text-muted">
           <span class="inline-flex items-center gap-1.5">
             <span class="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
