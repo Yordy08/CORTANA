@@ -660,17 +660,8 @@ function formatDate(isoOrLocale: string | undefined): string {
               </h1>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              <select
-                v-model="currentUser"
-                class="input-field !w-auto text-sm"
-                aria-label="Usuario actual"
-                @change="changeCurrentUser"
-              >
-                <option value="1">Usuario 1</option>
-                <option value="2">Usuario 2</option>
-              </select>
               <button class="btn-secondary whitespace-nowrap" @click="showNotificationPanel = true">
-                Notificar<span v-if="notifications.length" class="ml-1">({{ notifications.length }})</span>
+                Notificar
               </button>
               <button
                 v-if="installPrompt"
@@ -691,7 +682,7 @@ function formatDate(isoOrLocale: string | undefined): string {
         >
           <div class="glass-card w-full max-w-md space-y-4 p-6">
             <div class="flex items-center justify-between">
-              <h3 class="text-lg font-semibold">Notificar al Usuario {{ currentUser === '1' ? '2' : '1' }}</h3>
+              <h3 class="text-lg font-semibold">Enviar notificación</h3>
               <button class="text-muted hover:text-white text-xl" @click="showNotificationPanel = false">✕</button>
             </div>
             <textarea
@@ -715,7 +706,7 @@ function formatDate(isoOrLocale: string | undefined): string {
           class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
         >
           <div class="glass-card w-full max-w-md space-y-4 border-accent/40 p-6">
-            <h3 class="text-lg font-semibold">Mensaje del Usuario {{ pendingNotification.sender }}</h3>
+            <h3 class="text-lg font-semibold">Nueva notificación</h3>
             <p class="whitespace-pre-line rounded-xl bg-white/10 p-4 text-sm leading-relaxed">
               {{ pendingNotification.message }}
             </p>
@@ -733,7 +724,7 @@ function formatDate(isoOrLocale: string | undefined): string {
           <div class="glass-card w-full max-w-md space-y-4 border-green-400/40 p-6">
             <h3 class="text-lg font-semibold text-green-300">Mensaje leído</h3>
             <p class="text-sm text-muted">
-              El Usuario {{ readNotification.recipient }} leyó tu mensaje.
+              Tu mensaje fue leído.
             </p>
             <div class="flex justify-end">
               <button class="btn-primary" @click="acknowledgeNotification(readNotification)">OK</button>
