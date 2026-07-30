@@ -50,3 +50,10 @@ export async function markPublishedOnX(postId: string) {
   if (!ids.includes(postId)) await writePublishedIds([postId, ...ids])
   return postId
 }
+
+export async function unmarkPublishedOnX(postId: string) {
+  const ids = await readPublishedIds()
+  const updatedIds = ids.filter((id) => id !== postId)
+  if (updatedIds.length !== ids.length) await writePublishedIds(updatedIds)
+  return postId
+}

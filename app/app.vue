@@ -270,6 +270,18 @@ function isPublishedOnX(postId: string) {
   return publishedXPostIds.value.includes(postId)
 }
 
+async function unmarkPublishedOnX(postId: string) {
+  if (!window.confirm('¿Desea desmarcar publicado en X?')) return
+
+  try {
+    await $fetch('/api/published-x', {
+      method: 'DELETE',
+      body: { postId }
+    })
+    publishedXPostIds.value = publishedXPostIds.value.filter((id) => id !== postId)
+  } catch {}
+}
+
 async function refreshActiveView(silent = false) {
   if (activeView.value === 'facebook') {
     await loadFacebookPosts(silent)
@@ -810,8 +822,15 @@ function formatDate(isoOrLocale: string | undefined): string {
                   <span v-if="item.category && !item.image" class="category-pill">{{ item.category }}</span>
 
                    <h3 class="font-semibold text-sm leading-snug">{{ item.title || 'Publicación web' }}</h3>
-                   <p v-if="isPublishedOnX(item.id)" class="text-xs font-semibold text-green-400">
-                     Publicado en X
+                   <p
+                     v-if="isPublishedOnX(item.id)"
+                     class="cursor-pointer text-sm font-semibold text-green-400 hover:text-green-300"
+                     role="button"
+                     tabindex="0"
+                     @click="unmarkPublishedOnX(item.id)"
+                     @keyup.enter="unmarkPublishedOnX(item.id)"
+                   >
+                     ✔️ | Publicado en X
                    </p>
                    <p class="text-xs text-muted-dark">
                     {{ formatDate(item.createdAt) || '' }}
