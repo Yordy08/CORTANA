@@ -332,6 +332,9 @@ async function sendNotification() {
 }
 
 async function acknowledgeNotification(notification: UserNotification) {
+  // Close the alert immediately; synchronization continues in the background.
+  notifications.value = notifications.value.filter((item) => item.id !== notification.id)
+
   try {
     const acknowledgingUser = notification.recipient === currentUser.value
       ? notification.recipient
@@ -341,11 +344,9 @@ async function acknowledgeNotification(notification: UserNotification) {
       method: 'POST',
       body: { id: notification.id, user: acknowledgingUser }
     })
-
-    // Remove the current alert immediately. The next poll shows the read
-    // confirmation only in the sender's session.
-    notifications.value = notifications.value.filter((item) => item.id !== notification.id)
-  } catch {}
+  } catch {
+    await fetchNotifications()
+  }
 }
 
 async function unmarkPublishedOnX(postId: string) {
