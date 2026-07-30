@@ -58,6 +58,7 @@ const newCount = ref(0)
 const lastCheckedAt = ref('')
 const syncing = ref(false)
 const corrections = ref<Correction[]>([])
+const publishedXPostIds = ref<string[]>([])
 const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
 const suggestField = ref('category')
@@ -203,6 +204,7 @@ async function applyCorrection(correctionId: string) {
 // Periodic checking
 let checkInterval: ReturnType<typeof setInterval> | null = null
 let correctionInterval: ReturnType<typeof setInterval> | null = null
+let publishedXInterval: ReturnType<typeof setInterval> | null = null
 // Keep the monitor responsive while avoiding overlapping scrapes.
 const AUTO_REFRESH_MS = 5000
 const FACEBOOK_REFRESH_MS = 15000
@@ -220,6 +222,8 @@ onMounted(() => {
   setTimeout(() => refreshAll(true), 0)
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
+  fetchPublishedX()
+  publishedXInterval = setInterval(fetchPublishedX, 3000)
 
   // Check the web frequently; Facebook remains on a less aggressive interval.
   checkInterval = setInterval(() => {
@@ -249,7 +253,22 @@ async function loadCachedPosts() {
 onUnmounted(() => {
   if (checkInterval) clearInterval(checkInterval)
   if (correctionInterval) clearInterval(correctionInterval)
+  if (publishedXInterval) clearInterval(publishedXInterval)
 })
+
+async function fetchPublishedX() {
+  try {
+    const response = await $fetch<{ postIds: string[] }>('/api/published-x', {
+      query: { _t: Date.now() },
+      cache: 'no-store'
+    })
+    publishedXPostIds.value = response.postIds
+  } catch {}
+}
+
+function isPublishedOnX(postId: string) {
+  return publishedXPostIds.value.includes(postId)
+}
 
 async function refreshActiveView(silent = false) {
   if (activeView.value === 'facebook') {
@@ -471,11 +490,20 @@ function triggerNotification(title: string, body: string) {
   }
 }
 
-async function copyLink(link = '', title = '') {
+async function copyLink(link = '', title = '', postId = '') {
   if (!link) return
   try {
     const text = title ? `${title}\n${link}` : link
     await navigator.clipboard.writeText(text)
+    if (postId) {
+      await $fetch('/api/published-x', {
+        method: 'POST',
+        body: { postId }
+      })
+      if (!publishedXPostIds.value.includes(postId)) {
+        publishedXPostIds.value = [postId, ...publishedXPostIds.value]
+      }
+    }
     // Brief visual feedback via the button text
     const btn = document.activeElement
     if (btn) {
@@ -781,8 +809,11 @@ function formatDate(isoOrLocale: string | undefined): string {
 
                   <span v-if="item.category && !item.image" class="category-pill">{{ item.category }}</span>
 
-                  <h3 class="font-semibold text-sm leading-snug">{{ item.title || 'Publicación web' }}</h3>
-                  <p class="text-xs text-muted-dark">
+                   <h3 class="font-semibold text-sm leading-snug">{{ item.title || 'Publicación web' }}</h3>
+                   <p v-if="isPublishedOnX(item.id)" class="text-xs font-semibold text-green-400">
+                     Publicado en X
+                   </p>
+                   <p class="text-xs text-muted-dark">
                     {{ formatDate(item.createdAt) || '' }}
                   </p>
                   <p class="whitespace-pre-line text-sm text-muted leading-relaxed">{{ item.context }}</p>
@@ -791,7 +822,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <button
                       v-if="item.link"
                       class="btn-primary text-xs !px-3 !py-1.5"
-                      @click="copyLink(item.link, item.title || 'Publicación web')"
+                      @click="copyLink(item.link, item.title || 'Publicación web', item.id)"
                     >
                       Copiar enlace
                     </button>
