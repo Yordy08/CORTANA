@@ -333,11 +333,18 @@ async function sendNotification() {
 
 async function acknowledgeNotification(notification: UserNotification) {
   try {
+    const acknowledgingUser = notification.recipient === currentUser.value
+      ? notification.recipient
+      : notification.sender
+
     await $fetch('/api/notifications/ack', {
       method: 'POST',
-      body: { id: notification.id, user: currentUser.value }
+      body: { id: notification.id, user: acknowledgingUser }
     })
-    await fetchNotifications()
+
+    // Remove the current alert immediately. The next poll shows the read
+    // confirmation only in the sender's session.
+    notifications.value = notifications.value.filter((item) => item.id !== notification.id)
   } catch {}
 }
 
