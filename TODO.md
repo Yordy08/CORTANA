@@ -6,4 +6,4 @@
 - [x] 3. `app/app.vue`: agregar botón "Revisar" para disparar scrapeo manual
 - [x] 4. `app/app.vue`: actualizar texto de estado (actualización manual)
 - [x] 5. Verificar que notificaciones/correcciones usen backend (Redis + archivo) — ya implementado via sharedStore
-- [ ] 6. Commit "corriendo nuevo"
+- [x] 6. Commit "corriendo nuevo"

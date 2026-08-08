@@ -656,7 +656,7 @@ function formatDate(isoOrLocale: string | undefined): string {
             </div>
 <div class="flex flex-wrap items-center gap-2">
               <button
-                class="btn-secondary whitespace-nowrap"
+                class="btn-revisar whitespace-nowrap"
                 :disabled="syncing"
                 @click="refreshAll(false)"
               >
