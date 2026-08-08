@@ -217,13 +217,11 @@ async function applyCorrection(correctionId: string) {
   } catch {}
 }
 
-// Periodic checking
-let checkInterval: ReturnType<typeof setInterval> | null = null
+// Periodic checking (manual scraping only; these intervals handle
+// notifications/corrections/published-X, not the monitor scrape)
 let correctionInterval: ReturnType<typeof setInterval> | null = null
 let publishedXInterval: ReturnType<typeof setInterval> | null = null
 let notificationInterval: ReturnType<typeof setInterval> | null = null
-// Keep the monitor responsive while avoiding overlapping scrapes.
-const AUTO_REFRESH_MS = 5000
 const FACEBOOK_REFRESH_MS = 15000
 const lastFacebookSyncAt = ref(0)
 
@@ -236,21 +234,14 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Render the last known posts immediately while the live monitor updates in
-  // the background.
+  // Render the last known posts immediately. The actual scrape is manual.
   loadCachedPosts()
-  setTimeout(() => refreshAll(true), 0)
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
   fetchPublishedX()
   publishedXInterval = setInterval(fetchPublishedX, 3000)
   fetchNotifications()
   notificationInterval = setInterval(fetchNotifications, 3000)
-
-  // Check the web frequently; Facebook remains on a less aggressive interval.
-  checkInterval = setInterval(() => {
-    refreshAll(true)
-  }, AUTO_REFRESH_MS)
 })
 
 async function loadCachedPosts() {
@@ -273,7 +264,6 @@ async function loadCachedPosts() {
 }
 
 onUnmounted(() => {
-  if (checkInterval) clearInterval(checkInterval)
   if (correctionInterval) clearInterval(correctionInterval)
   if (publishedXInterval) clearInterval(publishedXInterval)
   if (notificationInterval) clearInterval(notificationInterval)
@@ -664,7 +654,14 @@ function formatDate(isoOrLocale: string | undefined): string {
                 Cortana Monitor
               </h1>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
+<div class="flex flex-wrap items-center gap-2">
+              <button
+                class="btn-secondary whitespace-nowrap"
+                :disabled="syncing"
+                @click="refreshAll(false)"
+              >
+                {{ syncing ? 'Revisando...' : 'Revisar' }}
+              </button>
               <button class="btn-secondary whitespace-nowrap" @click="showNotificationPanel = true">
                 Notificar
               </button>
@@ -738,9 +735,9 @@ function formatDate(isoOrLocale: string | undefined): string {
           <span v-if="lastCheckedAt" class="text-muted-dark">
             Última revisión: {{ lastCheckedAt }}
           </span>
-          <span class="inline-flex items-center gap-1.5 text-accent-light">
+<span class="inline-flex items-center gap-1.5 text-accent-light">
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
-             {{ syncing ? 'Sincronizando...' : 'Autoactualiza cada 15s' }}
+             {{ syncing ? 'Sincronizando...' : 'Actualización manual — pulsa "Revisar"' }}
           </span>
           <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
