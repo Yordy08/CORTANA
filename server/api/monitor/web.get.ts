@@ -268,7 +268,11 @@ export default defineEventHandler(async (event) => {
   const allPosts = await getStoredPosts('web')
   const recentPosts = allPosts
     .filter(isInsideTodayWindow)
-    .sort((a, b) => Date.parse(b.date || b.detectedAt) - Date.parse(a.date || a.detectedAt))
+    .sort((a, b) => {
+      const aTime = Date.parse(a.date || a.detectedAt) || 0
+      const bTime = Date.parse(b.date || b.detectedAt) || 0
+      return bTime - aTime
+    })
 
   const items: WebItem[] = recentPosts.map((post) => ({
     id: post.id,

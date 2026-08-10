@@ -31,7 +31,13 @@ export default defineEventHandler(async () => {
     0
   ))
   await deletePostsBefore('web', currentDayStart)
-  const posts = (await getStoredPosts('web')).filter(isRecent)
+  const posts = (await getStoredPosts('web'))
+    .filter(isRecent)
+    .sort((a, b) => {
+      const aTime = Date.parse(a.date || a.detectedAt) || 0
+      const bTime = Date.parse(b.date || b.detectedAt) || 0
+      return bTime - aTime
+    })
   const items: WebItem[] = posts.map((post) => ({
     id: post.id,
     title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
