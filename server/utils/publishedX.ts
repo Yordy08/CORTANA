@@ -44,5 +44,6 @@ export async function markPublishedOnX(postId: string) {
 
 export async function unmarkPublishedOnX(postId: string) {
   await (await statusCollection()).deleteOne({ postId })
+  await (await copiesCollection()).deleteMany({ postId })
   return { postId, dailyCount: await getDailyPublishedCount() }
 }
