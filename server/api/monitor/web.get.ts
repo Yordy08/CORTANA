@@ -124,9 +124,14 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 
 async function fetchWordPressCandidates(baseUrl: URL) {
   const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
+  const { start, end } = getTodayWindowInColombia()
   // Only request fields used by the monitor. The full embedded response is
   // unnecessarily large and makes every refresh wait several seconds.
   apiUrl.searchParams.set('per_page', '100')
+  // Ask WordPress directly for the complete Colombia calendar day instead of
+  // relying only on the number of posts returned by the first page.
+  apiUrl.searchParams.set('after', start.toISOString())
+  apiUrl.searchParams.set('before', end.toISOString())
   // `_links` is required by WordPress for the requested embedded media to be
   // included alongside `_embedded`.
   apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
@@ -151,10 +156,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
     if (pagePosts.length < 100) break
   }
 
-  const todayPosts = posts.filter(isInsideTodayWindow)
-  const selectedPosts = todayPosts.length ? todayPosts : posts
-
-  return selectedPosts.map((post) => {
+  return posts.filter(isInsideTodayWindow).map((post) => {
     const title = cleanText(post.title?.rendered)
     const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
     const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
