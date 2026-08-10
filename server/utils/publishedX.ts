@@ -32,7 +32,8 @@ export async function getDailyPublishedCount() {
 
 export async function markPublishedOnX(postId: string) {
   const now = new Date()
-  await (await copiesCollection()).insertOne({ postId, copiedAt: now })
+  const status = await (await statusCollection()).findOne({ postId })
+  if (!status) await (await copiesCollection()).insertOne({ postId, copiedAt: now })
   await (await statusCollection()).updateOne(
     { postId },
     { $set: { postId, markedAt: now.toISOString() } },

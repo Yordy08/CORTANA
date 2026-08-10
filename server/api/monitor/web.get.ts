@@ -1,4 +1,4 @@
-import { addNewPosts, getStoredPosts } from '../../utils/storage'
+import { addNewPosts, deletePostsBefore, getStoredPosts } from '../../utils/storage'
 import * as cheerio from 'cheerio'
 
 type WebItem = {
@@ -126,30 +126,35 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
   // Only request fields used by the monitor. The full embedded response is
   // unnecessarily large and makes every refresh wait several seconds.
-  apiUrl.searchParams.set('per_page', '30')
+  apiUrl.searchParams.set('per_page', '100')
   // `_links` is required by WordPress for the requested embedded media to be
   // included alongside `_embedded`.
   apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
   apiUrl.searchParams.set('_embed', '1')
-  apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
+  const posts: WordPressPost[] = []
+  for (let page = 1; page <= 10; page++) {
+    apiUrl.searchParams.set('page', String(page))
+    apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
+    const response = await fetch(apiUrl, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
+        accept: 'application/json',
+        'cache-control': 'no-cache',
+        pragma: 'no-cache'
+      },
+      signal: AbortSignal.timeout(8000)
+    })
 
-  const response = await fetch(apiUrl, {
-    headers: {
-      'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
-      accept: 'application/json',
-      'cache-control': 'no-cache',
-      pragma: 'no-cache'
-    },
-    signal: AbortSignal.timeout(8000)
-  })
+    if (!response.ok) return []
+    const pagePosts = await response.json() as WordPressPost[]
+    posts.push(...pagePosts)
+    if (pagePosts.length < 100) break
+  }
 
-  if (!response.ok) return []
-
-  const posts = await response.json() as WordPressPost[]
   const todayPosts = posts.filter(isInsideTodayWindow)
   const selectedPosts = todayPosts.length ? todayPosts : posts
 
-  return selectedPosts.slice(0, 100).map((post) => {
+  return selectedPosts.map((post) => {
     const title = cleanText(post.title?.rendered)
     const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
     const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
@@ -184,6 +189,10 @@ export default defineEventHandler(async (event) => {
   }
 
   let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
+
+  const { year, month, day } = getColombiaDateParts()
+  const currentDayStart = new Date(Date.UTC(year, month, day, 11, 0, 0, 0))
+  await deletePostsBefore('web', currentDayStart)
 
   if (candidates.length === 0) {
     const response = await fetch(parsedUrl.toString(), {
@@ -259,7 +268,7 @@ export default defineEventHandler(async (event) => {
     .filter(isInsideTodayWindow)
     .sort((a, b) => Date.parse(b.date || b.detectedAt) - Date.parse(a.date || a.detectedAt))
 
-  const items: WebItem[] = recentPosts.slice(0, 100).map((post) => ({
+  const items: WebItem[] = recentPosts.map((post) => ({
     id: post.id,
     title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),

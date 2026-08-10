@@ -247,15 +247,9 @@ onMounted(() => {
 
 async function loadCachedPosts() {
   try {
-    const [facebookCache, webCache] = await Promise.all([
-      $fetch<MonitorResponse>('/api/monitor/facebook/cache'),
-      $fetch<MonitorResponse>('/api/monitor/web/cache')
-    ])
+    const webCache = await $fetch<MonitorResponse>('/api/monitor/web/cache')
 
     // Do not replace a live response that arrived before the cache request.
-    if (!facebookItems.value.length && facebookCache.items?.length) {
-      facebookItems.value = facebookCache.items
-    }
     if (!websiteItems.value.length && webCache.items?.length) {
       websiteItems.value = webCache.items
     }
@@ -351,11 +345,7 @@ async function unmarkPublishedOnX(postId: string) {
 }
 
 async function refreshActiveView(silent = false) {
-  if (activeView.value === 'facebook') {
-    await loadFacebookPosts(silent)
-  } else {
-    await loadWebsitePosts(silent)
-  }
+  await loadWebsitePosts(silent)
 }
 
 async function refreshAll(silent = false) {
@@ -365,14 +355,7 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    const shouldRefreshFacebook = !silent
-      || !facebookItems.value.length
-      || Date.now() - lastFacebookSyncAt.value >= FACEBOOK_REFRESH_MS
-    const tasks = [loadWebsitePosts(true)]
-
-    if (shouldRefreshFacebook) tasks.push(loadFacebookPosts(true))
-
-    await Promise.all(tasks)
+    await loadWebsitePosts(true)
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -555,7 +538,6 @@ async function loadWebsitePosts(silent = false) {
 }
 
 function getLoadingText() {
-  if (activeView.value === 'facebook') return 'Consultando publicaciones de Facebook...'
   return 'Leyendo publicaciones de la web...'
 }
 
@@ -742,9 +724,13 @@ function formatDate(isoOrLocale: string | undefined): string {
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
              {{ syncing ? 'Sincronizando...' : 'Actualización manual — pulsa "Revisar"' }}
           </span>
-           <span class="inline-flex items-center gap-1.5 text-green-300">
+          <span class="inline-flex items-center gap-1.5 text-green-300">
              <span class="h-2 w-2 rounded-full bg-green-400" />
              Publicadas en X hoy: {{ dailyPublishedXCount }}
+           </span>
+           <span class="inline-flex items-center gap-1.5 text-accent-light">
+             <span class="h-2 w-2 rounded-full bg-accent-light" />
+             Publicaciones web: {{ websiteItems.length }}
            </span>
            <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
@@ -775,14 +761,6 @@ function formatDate(isoOrLocale: string | undefined): string {
               >
                 Web
               </button>
-              <button
-                class="glass-tab"
-                :class="{ active: activeView === 'facebook' }"
-                 @click="activeView = 'facebook'"
-              >
-                Facebook
-              </button>
-
             </div>
 
           </div>
@@ -974,12 +952,20 @@ function formatDate(isoOrLocale: string | undefined): string {
 
                   <div class="flex flex-wrap items-center gap-2 mt-2">
                     <button
-                      v-if="item.link"
-                      class="btn-primary text-xs !px-3 !py-1.5"
-                      @click="copyLink(item.link, item.title || 'Publicación web', item.id)"
-                    >
-                      Copiar enlace
-                    </button>
+                       v-if="item.link && !isPublishedOnX(item.id)"
+                       class="btn-primary text-xs !px-3 !py-1.5"
+                       @click="copyLink(item.link, item.title || 'Publicación web', item.id)"
+                     >
+                       Copiar enlace
+                     </button>
+
+                     <button
+                       v-else-if="isPublishedOnX(item.id)"
+                       class="btn-secondary text-xs !px-3 !py-1.5"
+                       @click="unmarkPublishedOnX(item.id)"
+                     >
+                       Desmarcar publicado
+                     </button>
 
                     <button
                       class="ml-auto btn-secondary text-xs !px-3 !py-1"

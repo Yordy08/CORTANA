@@ -55,6 +55,17 @@ export async function getStoredPosts(source: Source): Promise<ScrapedPost[]> {
   return (await postsCollection()).find({ source }).sort({ detectedAt: -1 }).toArray()
 }
 
+export async function deletePostsBefore(source: Source, before: Date) {
+  const result = await (await postsCollection()).deleteMany({
+    source,
+    $or: [
+      { date: { $lt: before.toISOString() } },
+      { date: { $exists: false }, detectedAt: { $lt: before.toISOString() } }
+    ]
+  })
+  return result.deletedCount
+}
+
 export async function addNewPosts(candidates: Array<{
   title?: string
   image?: string

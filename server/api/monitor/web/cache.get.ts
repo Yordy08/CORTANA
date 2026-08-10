@@ -1,4 +1,4 @@
-import { getStoredPosts } from '../../../utils/storage'
+import { deletePostsBefore, getStoredPosts } from '../../../utils/storage'
 
 type WebItem = {
   id: string
@@ -19,8 +19,20 @@ function isRecent(post: { date?: string; detectedAt?: string }) {
 }
 
 export default defineEventHandler(async () => {
+  const now = new Date()
+  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
+  const currentDayStart = new Date(Date.UTC(
+    colombia.getUTCFullYear(),
+    colombia.getUTCMonth(),
+    colombia.getUTCDate(),
+    11,
+    0,
+    0,
+    0
+  ))
+  await deletePostsBefore('web', currentDayStart)
   const posts = (await getStoredPosts('web')).filter(isRecent)
-  const items: WebItem[] = posts.slice(0, 80).map((post) => ({
+  const items: WebItem[] = posts.map((post) => ({
     id: post.id,
     title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
     context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
