@@ -1,20 +1,6 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { tmpdir } from 'node:os'
-import { Redis } from '@upstash/redis'
-import { getStoredPosts, type ScrapedPost } from './storage'
-
-const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(process.cwd(), 'data')
-const CORRECTIONS_FILE = join(DATA_DIR, 'corrections.json')
-const CORRECTIONS_KEY = 'cortana:corrections'
-
-const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-const sharedStore = redisUrl && redisToken
-  ? new Redis({ url: redisUrl, token: redisToken })
-  : null
+import { getDatabase } from './mongodb'
+import { deleteStoredPost, getStoredPosts, updateStoredPost, type ScrapedPost } from './storage'
 
 export interface PostCorrection {
   id: string
@@ -28,128 +14,81 @@ export interface PostCorrection {
   resolvedAt?: string
 }
 
-async function ensureDataDir() {
-  if (!existsSync(DATA_DIR)) {
-    await mkdir(DATA_DIR, { recursive: true })
-  }
+async function correctionsCollection() {
+  const collection = (await getDatabase()).collection<PostCorrection>('corrections')
+  await collection.createIndex({ status: 1, createdAt: -1 })
+  return collection
 }
 
-async function readCorrections(): Promise<PostCorrection[]> {
-  if (sharedStore) {
-    try {
-      return (await sharedStore.get<PostCorrection[]>(CORRECTIONS_KEY)) || []
-    } catch {
-      return []
-    }
-  }
-
-  try {
-    if (!existsSync(CORRECTIONS_FILE)) return []
-    const raw = await readFile(CORRECTIONS_FILE, 'utf-8')
-    return JSON.parse(raw) as PostCorrection[]
-  } catch {
-    return []
-  }
+function getCurrentValue(post: ScrapedPost | undefined, field: string) {
+  if (field === 'category') return post?.category
+  if (field === 'title') return post?.leadText
+  if (field === 'image') return post?.image
+  if (field === 'text') return post?.text
+  return undefined
 }
 
-async function writeCorrections(corrections: PostCorrection[]) {
-  if (sharedStore) {
-    await sharedStore.set(CORRECTIONS_KEY, corrections)
-    return
-  }
-
-  await ensureDataDir()
-  await writeFile(CORRECTIONS_FILE, JSON.stringify(corrections, null, 2), 'utf-8')
-}
-
-export async function getPendingCorrections(): Promise<PostCorrection[]> {
-  const all = await readCorrections()
-  let changed = false
+export async function getPendingCorrections() {
+  const collection = await correctionsCollection()
+  const all = await collection.find({ status: 'pending' }).sort({ createdAt: -1 }).toArray()
 
   for (const correction of all) {
-    if (correction.status !== 'pending') continue
-
-    const posts = await getStoredPosts(correction.source)
-    const post = posts.find((item) => item.id === correction.postId)
-    const currentValue = correction.field === 'category'
-      ? post?.category
-        : correction.field === 'title'
-          ? post?.leadText
-          : correction.field === 'image'
-            ? post?.image
-            : correction.field === 'text'
-              ? post?.text
-          : undefined
-
+    const post = (await getStoredPosts(correction.source)).find((item) => item.id === correction.postId)
+    const currentValue = getCurrentValue(post, correction.field)
     if (currentValue && currentValue.trim() === correction.suggestedValue.trim()) {
+      await collection.updateOne(
+        { id: correction.id, status: 'pending' },
+        { $set: { status: 'done', resolvedAt: new Date().toISOString() } }
+      )
       correction.status = 'done'
-      correction.resolvedAt = new Date().toISOString()
-      changed = true
     }
   }
 
-  if (changed) await writeCorrections(all)
-  return all.filter((c) => c.status === 'pending')
+  return all.filter((correction) => correction.status === 'pending')
 }
 
-export async function getAllCorrections(): Promise<PostCorrection[]> {
-  return readCorrections()
-}
-
-export async function createCorrection(correction: {
-  postId: string
-  source: 'facebook' | 'web'
-  field: string
-  currentValue: string
-  suggestedValue: string
-}): Promise<PostCorrection> {
-  const all = await readCorrections()
-
-  const existing = all.find(
-    (c) => c.postId === correction.postId && c.field === correction.field && c.status === 'pending'
-  )
+export async function createCorrection(correction: Omit<PostCorrection, 'id' | 'status' | 'createdAt' | 'resolvedAt'>) {
+  const collection = await correctionsCollection()
+  const existing = await collection.findOne({ postId: correction.postId, field: correction.field, status: 'pending' })
   if (existing) return existing
 
-  const id = `corr-${createHash('sha1').update(`${correction.postId}-${correction.field}-${Date.now()}`).digest('hex').slice(0, 12)}`
-
   const newCorrection: PostCorrection = {
-    id,
+    id: `corr-${createHash('sha1').update(`${correction.postId}-${correction.field}-${Date.now()}`).digest('hex').slice(0, 12)}`,
     ...correction,
     status: 'pending',
     createdAt: new Date().toISOString()
   }
-
-  await writeCorrections([newCorrection, ...all])
+  await collection.insertOne(newCorrection)
   return newCorrection
 }
 
 export async function resolveCorrection(correctionId: string): Promise<{ correction: PostCorrection; updatedPost?: ScrapedPost } | null> {
-  const all = await readCorrections()
-  const idx = all.findIndex((c) => c.id === correctionId)
-  if (idx === -1 || all[idx].status === 'done') return null
+  const collection = await correctionsCollection()
+  const correction = await collection.findOne({ id: correctionId, status: 'pending' })
+  if (!correction) return null
 
-  all[idx].status = 'done'
-  all[idx].resolvedAt = new Date().toISOString()
-  const resolved = all[idx]
+  const resolvedAt = new Date().toISOString()
+  await collection.updateOne({ id: correctionId, status: 'pending' }, { $set: { status: 'done', resolvedAt } })
+  correction.status = 'done'
+  correction.resolvedAt = resolvedAt
 
-  await writeCorrections(all)
-
-  const posts = await getStoredPosts(resolved.source)
-  const postIdx = posts.findIndex((p) => p.id === resolved.postId)
-  if (postIdx === -1) return { correction: resolved }
-
-  const post = posts[postIdx]
-  if (resolved.field === 'delete') {
-    posts.splice(postIdx, 1)
-  } else if (resolved.field === 'category') {
-    post.category = resolved.suggestedValue
+  if (correction.field === 'delete') {
+    await deleteStoredPost(correction.source, correction.postId)
+    return { correction, updatedPost: { id: correction.postId } as ScrapedPost }
   }
 
-  const filePath = resolved.source === 'facebook'
-    ? join(DATA_DIR, 'facebook-posts.json')
-    : join(DATA_DIR, 'web-posts.json')
+  const update = correction.field === 'category'
+    ? { category: correction.suggestedValue }
+    : correction.field === 'title'
+      ? { title: correction.suggestedValue }
+      : correction.field === 'image'
+        ? { image: correction.suggestedValue }
+        : correction.field === 'text'
+          ? { text: correction.suggestedValue, fullText: correction.suggestedValue }
+          : {}
+  const updatedPost = Object.keys(update).length
+    ? await updateStoredPost(correction.source, correction.postId, update)
+    : null
 
-  await writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8')
-
-  return { correction: resolved, updatedPost: resolved.field === 'delete' ? { ...post, id: resolved.postId } : post }
+  return { correction, ...(updatedPost ? { updatedPost } : {}) }
 }

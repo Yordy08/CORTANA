@@ -72,6 +72,7 @@ const lastCheckedAt = ref('')
 const syncing = ref(false)
 const corrections = ref<Correction[]>([])
 const publishedXPostIds = ref<string[]>([])
+const dailyPublishedXCount = ref(0)
 const currentUser = ref<UserId>('1')
 const notifications = ref<UserNotification[]>([])
 const showNotificationPanel = ref(false)
@@ -271,11 +272,12 @@ onUnmounted(() => {
 
 async function fetchPublishedX() {
   try {
-    const response = await $fetch<{ postIds: string[] }>('/api/published-x', {
+    const response = await $fetch<{ postIds: string[]; dailyCount: number }>('/api/published-x', {
       query: { _t: Date.now() },
       cache: 'no-store'
     })
     publishedXPostIds.value = response.postIds
+    dailyPublishedXCount.value = response.dailyCount
   } catch {}
 }
 
@@ -574,10 +576,11 @@ async function copyLink(link = '', title = '', postId = '') {
     const text = title ? `${title}\n${link}` : link
     await navigator.clipboard.writeText(text)
     if (postId) {
-      await $fetch('/api/published-x', {
+      const response = await $fetch<{ dailyCount: number }>('/api/published-x', {
         method: 'POST',
         body: { postId }
       })
+      dailyPublishedXCount.value = response.dailyCount
       if (!publishedXPostIds.value.includes(postId)) {
         publishedXPostIds.value = [postId, ...publishedXPostIds.value]
       }
@@ -739,7 +742,11 @@ function formatDate(isoOrLocale: string | undefined): string {
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
              {{ syncing ? 'Sincronizando...' : 'Actualización manual — pulsa "Revisar"' }}
           </span>
-          <span v-if="newCount > 0" class="badge-new">
+           <span class="inline-flex items-center gap-1.5 text-green-300">
+             <span class="h-2 w-2 rounded-full bg-green-400" />
+             Publicadas en X hoy: {{ dailyPublishedXCount }}
+           </span>
+           <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
           </span>
           <span

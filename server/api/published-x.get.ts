@@ -1,5 +1,6 @@
-import { getPublishedXIds } from '../utils/publishedX'
+import { getDailyPublishedCount, getPublishedXIds } from '../utils/publishedX'
 
 export default defineEventHandler(async () => ({
-  postIds: await getPublishedXIds()
+  postIds: await getPublishedXIds(),
+  dailyCount: await getDailyPublishedCount()
 }))

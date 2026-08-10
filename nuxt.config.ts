@@ -18,6 +18,12 @@ export default defineNuxtConfig({
     '/api/corrections/resolve': { maxDuration: 10 }
   },
 
+  nitro: {
+    externals: {
+      external: ['mongodb']
+    }
+  },
+
   app: {
     head: {
       title: 'Cortana Monitor',
@@ -46,6 +52,9 @@ export default defineNuxtConfig({
   },
 
   vite: {
+    ssr: {
+      external: ['mongodb']
+    },
     server: {
       hmr: {
         port: 24679

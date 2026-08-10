@@ -7,5 +7,5 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Falta postId' })
   }
 
-  return { postId: await unmarkPublishedOnX(String(body.postId)) }
+  return await unmarkPublishedOnX(String(body.postId))
 })

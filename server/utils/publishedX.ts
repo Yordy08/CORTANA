@@ -1,59 +1,47 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { Redis } from '@upstash/redis'
+import { getDatabase } from './mongodb'
 
-const DATA_DIR = process.env.VERCEL ? join(tmpdir(), 'cortana-data') : join(process.cwd(), 'data')
-const PUBLISHED_FILE = join(DATA_DIR, 'published-x.json')
-const PUBLISHED_KEY = 'cortana:published-x'
+type PublicationStatus = { postId: string; markedAt: string }
+type CopyEvent = { postId: string; copiedAt: Date }
 
-const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-const sharedStore = redisUrl && redisToken
-  ? new Redis({ url: redisUrl, token: redisToken })
-  : null
-
-async function readPublishedIds(): Promise<string[]> {
-  if (sharedStore) {
-    try {
-      return (await sharedStore.get<string[]>(PUBLISHED_KEY)) || []
-    } catch {
-      return []
-    }
-  }
-
-  try {
-    if (!existsSync(PUBLISHED_FILE)) return []
-    return JSON.parse(await readFile(PUBLISHED_FILE, 'utf-8')) as string[]
-  } catch {
-    return []
-  }
+async function statusCollection() {
+  const collection = (await getDatabase()).collection<PublicationStatus>('published_x')
+  await collection.createIndex({ postId: 1 }, { unique: true })
+  return collection
 }
 
-async function writePublishedIds(ids: string[]) {
-  if (sharedStore) {
-    await sharedStore.set(PUBLISHED_KEY, ids)
-    return
-  }
+async function copiesCollection() {
+  const collection = (await getDatabase()).collection<CopyEvent>('x_copy_events')
+  await collection.createIndex({ copiedAt: -1 })
+  return collection
+}
 
-  if (!existsSync(DATA_DIR)) await mkdir(DATA_DIR, { recursive: true })
-  await writeFile(PUBLISHED_FILE, JSON.stringify(ids, null, 2), 'utf-8')
+function colombiaDayStart(now = new Date()) {
+  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
+  return new Date(Date.UTC(colombia.getUTCFullYear(), colombia.getUTCMonth(), colombia.getUTCDate(), 5, 0, 0, 0))
 }
 
 export async function getPublishedXIds() {
-  return readPublishedIds()
+  return (await statusCollection()).find({}, { projection: { _id: 0, postId: 1 } }).toArray()
+    .then((items) => items.map((item) => item.postId))
+}
+
+export async function getDailyPublishedCount() {
+  const start = colombiaDayStart()
+  return (await copiesCollection()).countDocuments({ copiedAt: { $gte: start, $lt: new Date(start.getTime() + 24 * 60 * 60 * 1000) } })
 }
 
 export async function markPublishedOnX(postId: string) {
-  const ids = await readPublishedIds()
-  if (!ids.includes(postId)) await writePublishedIds([postId, ...ids])
-  return postId
+  const now = new Date()
+  await (await copiesCollection()).insertOne({ postId, copiedAt: now })
+  await (await statusCollection()).updateOne(
+    { postId },
+    { $set: { postId, markedAt: now.toISOString() } },
+    { upsert: true }
+  )
+  return { postId, dailyCount: await getDailyPublishedCount() }
 }
 
 export async function unmarkPublishedOnX(postId: string) {
-  const ids = await readPublishedIds()
-  const updatedIds = ids.filter((id) => id !== postId)
-  if (updatedIds.length !== ids.length) await writePublishedIds(updatedIds)
-  return postId
+  await (await statusCollection()).deleteOne({ postId })
+  return { postId, dailyCount: await getDailyPublishedCount() }
 }
