@@ -910,10 +910,7 @@ function formatDate(isoOrLocale: string | undefined): string {
 
                 <div class="p-4 space-y-2">
                   <div class="source-buttons">
-                    <span class="source-pill source-pill-ok">WEB</span>
-                   <span class="source-pill" :class="existsInFacebook(item) ? 'source-pill-ok' : 'source-pill-waiting'">
-                     {{ existsInFacebook(item) ? 'Facebook' : 'Facebook · esperando' }}
-                   </span>
+                   <span class="source-pill source-pill-ok">WEB</span>
                   </div>
 
                   <div v-if="correctionsFor(item.id).length" class="flex flex-wrap gap-2">
@@ -1092,7 +1089,7 @@ function formatDate(isoOrLocale: string | undefined): string {
 
         <!-- Footer -->
         <footer class="mt-8 text-center text-xs text-muted-dark">
-          <p>Cortana Monitor v2 &mdash; Monitor de Facebook y web</p>
+           <p>Cortana Monitor v2 &mdash; Monitor de publicaciones web</p>
           <p class="mt-1">Los datos se almacenan localmente en el servidor.</p>
         </footer>
       </main>
