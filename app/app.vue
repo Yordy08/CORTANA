@@ -272,7 +272,11 @@ async function fetchPublishedX() {
     })
     publishedXPostIds.value = response.postIds
     dailyPublishedXCount.value = response.dailyCount
-  } catch {}
+  } catch {
+    // Never keep stale visual status when MongoDB cannot be read.
+    publishedXPostIds.value = []
+    dailyPublishedXCount.value = 0
+  }
 }
 
 function isPublishedOnX(postId: string) {
@@ -340,7 +344,7 @@ async function unmarkPublishedOnX(postId: string) {
       method: 'DELETE',
       body: { postId }
     })
-    publishedXPostIds.value = publishedXPostIds.value.filter((id) => id !== postId)
+    await fetchPublishedX()
   } catch {}
 }
 
@@ -558,14 +562,11 @@ async function copyLink(link = '', title = '', postId = '') {
     const text = title ? `${title}\n${link}` : link
     await navigator.clipboard.writeText(text)
     if (postId) {
-      const response = await $fetch<{ dailyCount: number }>('/api/published-x', {
+      await $fetch('/api/published-x', {
         method: 'POST',
         body: { postId }
       })
-      dailyPublishedXCount.value = response.dailyCount
-      if (!publishedXPostIds.value.includes(postId)) {
-        publishedXPostIds.value = [postId, ...publishedXPostIds.value]
-      }
+      await fetchPublishedX()
     }
     // Brief visual feedback via the button text
     const btn = document.activeElement
