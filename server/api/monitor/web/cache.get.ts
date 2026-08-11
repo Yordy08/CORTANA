@@ -13,26 +13,41 @@ type WebItem = {
   isNew: boolean
 }
 
-function isRecent(post: { date?: string; detectedAt?: string }) {
+function isInsideTodayWindow(post: { date?: string; detectedAt?: string }, now = new Date()) {
   const timestamp = Date.parse(post.date || post.detectedAt || '')
-  return !Number.isNaN(timestamp) && Date.now() - timestamp <= 24 * 60 * 60 * 1000
+  if (Number.isNaN(timestamp)) return false
+
+  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
+  const start = new Date(Date.UTC(
+    colombia.getUTCFullYear(),
+    colombia.getUTCMonth(),
+    colombia.getUTCDate(),
+    5,
+    0,
+    0,
+    0
+  ))
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+  return timestamp >= start.getTime() && timestamp < end.getTime()
 }
 
 export default defineEventHandler(async () => {
   const now = new Date()
   const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
-  const currentDayStart = new Date(Date.UTC(
+  const colombiaHour = colombia.getUTCHours()
+  // Keep the previous calendar day until the 6:00 a. m. rollover.
+  const cleanupStart = new Date(Date.UTC(
     colombia.getUTCFullYear(),
     colombia.getUTCMonth(),
-    colombia.getUTCDate(),
-    11,
+    colombia.getUTCDate() - (colombiaHour < 6 ? 1 : 0),
+    5,
     0,
     0,
     0
   ))
-  await deletePostsBefore('web', currentDayStart)
+  await deletePostsBefore('web', cleanupStart)
   const posts = (await getStoredPosts('web'))
-    .filter(isRecent)
+    .filter((post) => isInsideTodayWindow(post, now))
     .sort((a, b) => {
       const aTime = Date.parse(a.date || a.detectedAt) || 0
       const bTime = Date.parse(b.date || b.detectedAt) || 0

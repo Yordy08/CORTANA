@@ -106,15 +106,12 @@ function getColombiaDateParts(date = new Date()) {
 function getTodayWindowInColombia(now = new Date()) {
   const { year, month, day } = getColombiaDateParts(now)
   return {
-    start: new Date(Date.UTC(year, month, day, 11, 0, 0, 0)),
+    start: new Date(Date.UTC(year, month, day, 5, 0, 0, 0)),
     end: new Date(Date.UTC(year, month, day + 1, 5, 0, 0, 0))
   }
 }
 
 function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
-  const { hour } = getColombiaDateParts()
-  if (hour < 6) return false
-
   const timestamp = Date.parse(post.date || post.detectedAt || '')
   if (Number.isNaN(timestamp)) return false
 
@@ -192,9 +189,10 @@ export default defineEventHandler(async (event) => {
 
   let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
 
-  const { year, month, day } = getColombiaDateParts()
-  const currentDayStart = new Date(Date.UTC(year, month, day, 11, 0, 0, 0))
-  await deletePostsBefore('web', currentDayStart)
+  const { year, month, day, hour } = getColombiaDateParts()
+  // Keep the previous calendar day until the 6:00 a. m. rollover.
+  const cleanupStart = new Date(Date.UTC(year, month, day - (hour < 6 ? 1 : 0), 5, 0, 0, 0))
+  await deletePostsBefore('web', cleanupStart)
 
   if (candidates.length === 0) {
     const response = await fetch(parsedUrl.toString(), {

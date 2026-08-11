@@ -1,17 +1,11 @@
 import { getDatabase } from './mongodb'
 
 type PublicationStatus = { postId: string; markedAt: string }
-type CopyEvent = { postId: string; copiedAt: Date }
 
 async function statusCollection() {
   const collection = (await getDatabase()).collection<PublicationStatus>('published_x')
   await collection.createIndex({ postId: 1 }, { unique: true })
-  return collection
-}
-
-async function copiesCollection() {
-  const collection = (await getDatabase()).collection<CopyEvent>('x_copy_events')
-  await collection.createIndex({ copiedAt: -1 })
+  await collection.createIndex({ markedAt: 1 })
   return collection
 }
 
@@ -27,13 +21,16 @@ export async function getPublishedXIds() {
 
 export async function getDailyPublishedCount() {
   const start = colombiaDayStart()
-  return (await copiesCollection()).countDocuments({ copiedAt: { $gte: start, $lt: new Date(start.getTime() + 24 * 60 * 60 * 1000) } })
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+  // markedAt is the source of truth shown by the UI. Counting copy events
+  // can omit publications when the event write failed or predates migration.
+  return (await statusCollection()).countDocuments({
+    markedAt: { $gte: start.toISOString(), $lt: end.toISOString() }
+  })
 }
 
 export async function markPublishedOnX(postId: string) {
   const now = new Date()
-  const status = await (await statusCollection()).findOne({ postId })
-  if (!status) await (await copiesCollection()).insertOne({ postId, copiedAt: now })
   await (await statusCollection()).updateOne(
     { postId },
     { $set: { postId, markedAt: now.toISOString() } },
@@ -44,6 +41,5 @@ export async function markPublishedOnX(postId: string) {
 
 export async function unmarkPublishedOnX(postId: string) {
   await (await statusCollection()).deleteOne({ postId })
-  await (await copiesCollection()).deleteMany({ postId })
   return { postId, dailyCount: await getDailyPublishedCount() }
 }
