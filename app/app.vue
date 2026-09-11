@@ -548,7 +548,8 @@ async function loadWebsitePosts(silent = false) {
 
     lastCheckedAt.value = new Date().toLocaleTimeString('es-CO')
   } catch {
-    if (!silent) message.value = 'No se pudieron leer las publicaciones de la web.'
+    message.value = 'No se pudieron leer las publicaciones de la web. Intenta nuevamente en unos segundos.'
+    lastCheckedAt.value = new Date().toLocaleTimeString('es-CO')
   } finally {
     if (!silent) loading.value = false
   }

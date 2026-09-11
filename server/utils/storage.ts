@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Collection } from 'mongodb'
 import { getDatabase } from './mongodb'
 
 export interface ScrapedPost {
@@ -19,6 +20,7 @@ export interface ScrapedPost {
 
 type Source = ScrapedPost['source']
 const COLLECTION = 'posts'
+let collectionPromise: Promise<Collection<ScrapedPost>> | null = null
 
 function normalizeLink(link = ''): string {
   if (!link.trim()) return ''
@@ -45,10 +47,20 @@ function candidateKey(candidate: { link?: string; text?: string }, source: Sourc
 }
 
 async function postsCollection() {
-  const collection = (await getDatabase()).collection<ScrapedPost>(COLLECTION)
-  await collection.createIndex({ source: 1, detectedAt: -1 })
-  await collection.createIndex({ source: 1, link: 1 })
-  return collection
+  if (!collectionPromise) {
+    collectionPromise = (async () => {
+      const collection = (await getDatabase()).collection<ScrapedPost>(COLLECTION)
+      await Promise.all([
+        collection.createIndex({ source: 1, detectedAt: -1 }),
+        collection.createIndex({ source: 1, link: 1 })
+      ])
+      return collection
+    })().catch((error) => {
+      collectionPromise = null
+      throw error
+    })
+  }
+  return collectionPromise
 }
 
 export async function getStoredPosts(source: Source): Promise<ScrapedPost[]> {
@@ -80,6 +92,8 @@ export async function addNewPosts(candidates: Array<{
   const collection = await postsCollection()
   const posts = await getStoredPosts(source)
   const newPosts: ScrapedPost[] = []
+  const pendingInserts: ScrapedPost[] = []
+  const pendingUpdates: Array<{ id: string; updates: Partial<ScrapedPost> }> = []
 
   for (const candidate of candidates) {
     if (!candidate.text && !candidate.image && !candidate.link) continue
@@ -97,7 +111,7 @@ export async function addNewPosts(candidates: Array<{
       if (candidate.date && candidate.date !== existing.date) updates.date = candidate.date
       if (Object.keys(updates).length) {
         Object.assign(existing, updates)
-        await collection.updateOne({ id: existing.id, source }, { $set: updates })
+        pendingUpdates.push({ id: existing.id, updates })
       }
       continue
     }
@@ -118,9 +132,16 @@ export async function addNewPosts(candidates: Array<{
       detectedAt: new Date().toISOString(),
       notified: false
     }
-    await collection.insertOne(post)
-    newPosts.push(post)
-    posts.unshift(post)
+     pendingInserts.push(post)
+     newPosts.push(post)
+     posts.unshift(post)
+  }
+
+  if (pendingInserts.length) await collection.insertMany(pendingInserts)
+  if (pendingUpdates.length) {
+    await collection.bulkWrite(pendingUpdates.map(({ id, updates }) => ({
+      updateOne: { filter: { id, source }, update: { $set: updates } }
+    })))
   }
 
   return newPosts
