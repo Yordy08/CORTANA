@@ -233,7 +233,13 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Only render cached data on startup. Scraping is started by "Revisar".
+  const refreshRequested = new URLSearchParams(window.location.search).has('refresh')
+  if (refreshRequested) {
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
+
+  // Render cached data on startup. A refresh requested by the button also
+  // starts a live web check after the page has loaded.
   loadCachedPosts()
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
@@ -241,6 +247,7 @@ onMounted(() => {
   publishedXInterval = setInterval(fetchPublishedX, 3000)
   fetchNotifications()
   notificationInterval = setInterval(fetchNotifications, 3000)
+  if (refreshRequested) refreshAll(false)
 })
 
 async function loadCachedPosts() {
@@ -364,6 +371,10 @@ async function refreshAll(silent = false) {
     syncing.value = false
     if (!silent) loading.value = false
   }
+}
+
+function refreshPage() {
+  window.location.href = `/?refresh=${Date.now()}`
 }
 
 const ignoredComparableWords = new Set([
@@ -660,7 +671,7 @@ function formatDate(isoOrLocale: string | undefined): string {
               <button
                 class="btn-revisar whitespace-nowrap"
                 :disabled="syncing"
-                @click="refreshAll(false)"
+                @click="refreshPage"
               >
                 {{ syncing ? 'Revisando...' : 'Revisar' }}
               </button>
