@@ -233,13 +233,8 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  const refreshRequested = new URLSearchParams(window.location.search).has('refresh')
-  if (refreshRequested) {
-    window.history.replaceState({}, document.title, window.location.pathname)
-  }
-
-  // Render cached data on startup. A refresh requested by the button also
-  // starts a live web check after the page has loaded.
+  // Render the data already available on the server. The Revisar button only
+  // reloads this page and never starts a scraping request.
   loadCachedPosts()
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
@@ -247,7 +242,6 @@ onMounted(() => {
   publishedXInterval = setInterval(fetchPublishedX, 3000)
   fetchNotifications()
   notificationInterval = setInterval(fetchNotifications, 3000)
-  if (refreshRequested) refreshAll(false)
 })
 
 async function loadCachedPosts() {
@@ -374,7 +368,7 @@ async function refreshAll(silent = false) {
 }
 
 function refreshPage() {
-  window.location.href = `/?refresh=${Date.now()}`
+  window.location.reload()
 }
 
 const ignoredComparableWords = new Set([
