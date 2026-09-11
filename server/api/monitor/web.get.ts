@@ -106,8 +106,9 @@ function getColombiaDateParts(date = new Date()) {
 function getTodayWindowInColombia(now = new Date()) {
   const { year, month, day } = getColombiaDateParts(now)
   return {
-    start: new Date(Date.UTC(year, month, day, 5, 0, 0, 0)),
-    end: new Date(Date.UTC(year, month, day + 1, 5, 0, 0, 0))
+    // The web monitor runs from 06:00 to 23:00 in Colombia.
+    start: new Date(Date.UTC(year, month, day, 11, 0, 0, 0)),
+    end: new Date(Date.UTC(year, month, day + 1, 4, 0, 0, 0))
   }
 }
 
@@ -191,8 +192,19 @@ export default defineEventHandler(async (event) => {
 
   const { year, month, day, hour } = getColombiaDateParts()
   // Keep the previous calendar day until the 6:00 a. m. rollover.
-  const cleanupStart = new Date(Date.UTC(year, month, day - (hour < 6 ? 1 : 0), 5, 0, 0, 0))
+  const cleanupStart = new Date(Date.UTC(year, month, day, 11, 0, 0, 0))
   await deletePostsBefore('web', cleanupStart)
+
+  // Between 23:00 and 06:00 the current web day is closed and must appear empty.
+  if (hour < 6 || hour >= 23) {
+    return {
+      items: [],
+      source: 'web',
+      totalStored: 0,
+      newDetected: 0,
+      message: 'La jornada web está cerrada. Comienza nuevamente a las 6:00 a. m.'
+    }
+  }
 
   if (candidates.length === 0) {
     const response = await fetch(parsedUrl.toString(), {
@@ -291,7 +303,7 @@ export default defineEventHandler(async (event) => {
     totalStored: allPosts.length,
     newDetected: newPosts.length,
     message: newPosts.length > 0
-      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
-      : `Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y medianoche.`
+       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
+       : `Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
   }
 })

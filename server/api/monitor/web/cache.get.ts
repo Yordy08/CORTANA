@@ -22,12 +22,20 @@ function isInsideTodayWindow(post: { date?: string; detectedAt?: string }, now =
     colombia.getUTCFullYear(),
     colombia.getUTCMonth(),
     colombia.getUTCDate(),
-    5,
+    11,
     0,
     0,
     0
   ))
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+  const end = new Date(Date.UTC(
+    colombia.getUTCFullYear(),
+    colombia.getUTCMonth(),
+    colombia.getUTCDate() + 1,
+    4,
+    0,
+    0,
+    0
+  ))
   return timestamp >= start.getTime() && timestamp < end.getTime()
 }
 
@@ -35,17 +43,26 @@ export default defineEventHandler(async () => {
   const now = new Date()
   const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
   const colombiaHour = colombia.getUTCHours()
-  // Keep the previous calendar day until the 6:00 a. m. rollover.
+  // Clear the previous web day at the start of the new 06:00-23:00 window.
   const cleanupStart = new Date(Date.UTC(
     colombia.getUTCFullYear(),
     colombia.getUTCMonth(),
     colombia.getUTCDate() - (colombiaHour < 6 ? 1 : 0),
-    5,
+    11,
     0,
     0,
     0
   ))
   await deletePostsBefore('web', cleanupStart)
+  if (colombiaHour < 6 || colombiaHour >= 23) {
+    return {
+      items: [],
+      source: 'web-cache',
+      totalStored: 0,
+      newDetected: 0,
+      message: 'La jornada web está cerrada. Comienza nuevamente a las 6:00 a. m.'
+    }
+  }
   const posts = (await getStoredPosts('web'))
     .filter((post) => isInsideTodayWindow(post, now))
     .sort((a, b) => {

@@ -172,6 +172,14 @@ function getWordPressImage(post: WordPressPost) {
     || media?.source_url
 }
 
+function getWebDayWindowInColombia(now = new Date()) {
+  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
+  return {
+    start: new Date(Date.UTC(colombia.getUTCFullYear(), colombia.getUTCMonth(), colombia.getUTCDate(), 11, 0, 0, 0)),
+    end: new Date(Date.UTC(colombia.getUTCFullYear(), colombia.getUTCMonth(), colombia.getUTCDate() + 1, 4, 0, 0, 0))
+  }
+}
+
 async function fetchDailyWebItems(existingTextKeys: Set<string>): Promise<DisplayItem[]> {
   const apiUrl = new URL('https://burbujapolitica.com/wp-json/wp/v2/posts')
   apiUrl.searchParams.set('per_page', '50')
@@ -188,7 +196,7 @@ async function fetchDailyWebItems(existingTextKeys: Set<string>): Promise<Displa
   if (!response.ok) return []
 
   const posts = await response.json() as WordPressPost[]
-  const { start, end } = getTodayWindowInColombia()
+   const { start, end } = getWebDayWindowInColombia()
   const items: DisplayItem[] = []
 
   for (const post of posts) {
