@@ -75,6 +75,7 @@ const publishedXPostIds = ref<string[]>([])
 const dailyPublishedXCount = ref(0)
 const currentUser = ref<UserId>('1')
 const notifications = ref<UserNotification[]>([])
+const copiedLinkId = ref('')
 const showNotificationPanel = ref(false)
 const showCorrections = ref(false)
 const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null>(null)
@@ -577,11 +578,10 @@ function triggerNotification(title: string, body: string) {
   }
 }
 
-async function copyLink(link = '', title = '', postId = '') {
+async function copyLink(link = '', postId = '') {
   if (!link) return
   try {
-    const text = title ? `${title}\n${link}` : link
-    await navigator.clipboard.writeText(text)
+    await navigator.clipboard.writeText(link.trim())
     if (postId) {
       await $fetch('/api/published-x', {
         method: 'POST',
@@ -589,15 +589,24 @@ async function copyLink(link = '', title = '', postId = '') {
       })
       await fetchPublishedX()
     }
-    // Brief visual feedback via the button text
-    const btn = document.activeElement
-    if (btn) {
-      const original = btn.textContent
-      btn.textContent = 'Copiado ✓'
-      setTimeout(() => { if (btn) btn.textContent = original }, 1200)
-    }
+    copiedLinkId.value = postId
+    setTimeout(() => {
+      if (copiedLinkId.value === postId) copiedLinkId.value = ''
+    }, 1500)
   } catch {
-    // ignore
+    // Clipboard access can be denied by the browser outside a secure context.
+    const textarea = document.createElement('textarea')
+    textarea.value = link.trim()
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
+    copiedLinkId.value = postId
+    setTimeout(() => {
+      if (copiedLinkId.value === postId) copiedLinkId.value = ''
+    }, 1500)
   }
 }
 
@@ -975,9 +984,9 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <button
                        v-if="item.link && !isPublishedOnX(item.id)"
                        class="btn-primary text-xs !px-3 !py-1.5"
-                       @click="copyLink(item.link, item.title || 'Publicación web', item.id)"
-                     >
-                       Copiar enlace
+                        @click="copyLink(item.link, item.id)"
+                      >
+                        {{ copiedLinkId === item.id ? 'Enlace copiado' : 'Copiar enlace' }}
                      </button>
 
                      <button
