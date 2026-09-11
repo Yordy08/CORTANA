@@ -72,10 +72,18 @@ function resolveUrl(value: string | undefined, baseUrl: string): string | undefi
 
 function getWordPressImage(post: WordPressPost): string | undefined {
   const media = post._embedded?.['wp:featuredmedia']?.[0]
-  return media?.media_details?.sizes?.large?.source_url
+  const featuredImage = media?.media_details?.sizes?.large?.source_url
     || media?.media_details?.sizes?.medium_large?.source_url
     || media?.media_details?.sizes?.medium?.source_url
     || media?.source_url
+  if (featuredImage) return featuredImage
+
+  const $ = cheerio.load(post.content?.rendered || '')
+  const image = $('img').first()
+  const srcset = image.attr('srcset') || image.attr('data-srcset')
+  return srcset?.split(',')[0]?.trim().split(/\s+/)[0]
+    || image.attr('src')
+    || image.attr('data-src')
 }
 
 function getWordPressCategory(post: WordPressPost): string | undefined {
@@ -135,7 +143,7 @@ async function fetchWordPressCandidates(baseUrl: URL) {
   apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
   apiUrl.searchParams.set('_embed', '1')
   const posts: WordPressPost[] = []
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 1000; page++) {
     apiUrl.searchParams.set('page', String(page))
     apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
     const response = await fetch(apiUrl, {
@@ -151,7 +159,8 @@ async function fetchWordPressCandidates(baseUrl: URL) {
     if (!response.ok) return []
     const pagePosts = await response.json() as WordPressPost[]
     posts.push(...pagePosts)
-    if (pagePosts.length < 100) break
+    const totalPages = Number(response.headers.get('x-wp-totalpages') || 0)
+    if (pagePosts.length < 100 || (totalPages > 0 && page >= totalPages)) break
   }
 
   return posts.filter(isInsideTodayWindow).map((post) => {

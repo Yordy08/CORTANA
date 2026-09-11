@@ -48,7 +48,7 @@ type UserNotification = {
 const FACEBOOK_URL = 'https://www.facebook.com/BurbujadeCordoba'
 const WEBSITE_URL = 'https://burbujapolitica.com/'
 
-const activeView = ref<'facebook' | 'web'>('web')
+const activeView = ref<'web'>('web')
 const facebookEmbedUrl = ref('https://m.facebook.com')
 const fbIframe = ref<HTMLIFrameElement | null>(null)
 
@@ -245,17 +245,11 @@ onMounted(() => {
 
 async function loadCachedPosts() {
   try {
-    const [webCache, facebookCache] = await Promise.all([
-      $fetch<MonitorResponse>('/api/monitor/web/cache'),
-      $fetch<MonitorResponse>('/api/monitor/facebook/cache')
-    ])
+    const webCache = await $fetch<MonitorResponse>('/api/monitor/web/cache')
 
     // Do not replace a live response that arrived before the cache request.
     if (!websiteItems.value.length && webCache.items?.length) {
       websiteItems.value = webCache.items
-    }
-    if (!facebookItems.value.length && facebookCache.items?.length) {
-      facebookItems.value = facebookCache.items
     }
   } catch {
     // The live request still runs if the cache is unavailable.
@@ -353,7 +347,7 @@ async function unmarkPublishedOnX(postId: string) {
 }
 
 async function refreshActiveView(silent = false) {
-  await (activeView.value === 'facebook' ? loadFacebookPosts(silent) : loadWebsitePosts(silent))
+  await loadWebsitePosts(silent)
 }
 
 async function refreshAll(silent = false) {
@@ -363,7 +357,7 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    await Promise.all([loadFacebookPosts(true), loadWebsitePosts(true)])
+    await loadWebsitePosts(true)
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -750,7 +744,7 @@ function formatDate(isoOrLocale: string | undefined): string {
            </span>
            <span class="inline-flex items-center gap-1.5 text-accent-light">
              <span class="h-2 w-2 rounded-full bg-accent-light" />
-              Facebook: {{ facebookItems.length }} · Web: {{ websiteItems.length }}
+              Publicaciones web: {{ websiteItems.length }}
            </span>
            <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
@@ -774,13 +768,6 @@ function formatDate(isoOrLocale: string | undefined): string {
           <!-- Tab bar -->
           <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-6">
              <div class="glass-tabs">
-               <button
-                 class="glass-tab"
-                 :class="{ active: activeView === 'facebook' }"
-                 @click="activeView = 'facebook'"
-               >
-                 Facebook
-               </button>
                <button
                 class="glass-tab"
                 :class="{ active: activeView === 'web' }"

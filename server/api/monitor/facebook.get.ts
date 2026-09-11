@@ -166,10 +166,18 @@ function getTextKey(text = '') {
 
 function getWordPressImage(post: WordPressPost) {
   const media = post._embedded?.['wp:featuredmedia']?.[0]
-  return media?.media_details?.sizes?.large?.source_url
+  const featuredImage = media?.media_details?.sizes?.large?.source_url
     || media?.media_details?.sizes?.medium_large?.source_url
     || media?.media_details?.sizes?.medium?.source_url
     || media?.source_url
+  if (featuredImage) return featuredImage
+
+  const $ = cheerio.load(post.content?.rendered || '')
+  const image = $('img').first()
+  const srcset = image.attr('srcset') || image.attr('data-srcset')
+  return srcset?.split(',')[0]?.trim().split(/\s+/)[0]
+    || image.attr('src')
+    || image.attr('data-src')
 }
 
 function getWebDayWindowInColombia(now = new Date()) {
