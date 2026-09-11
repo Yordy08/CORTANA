@@ -30,6 +30,7 @@ function firstImageUrlFromAttributes(get: (name: string) => string | undefined):
   const srcset = get('srcset') || get('data-srcset')
   const src = get('src') || get('data-src') || get('data-original')
   const candidate = srcset?.split(',')[0]?.trim().split(/\s+/)[0] || src
+  if (candidate?.startsWith('//')) return `https:${candidate}`
   return candidate?.startsWith('http') ? candidate : undefined
 }
 
@@ -570,10 +571,11 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
          const image = imageElement
            ? imageElement.getAttribute('src') || imageElement.getAttribute('data-src') || imageElement.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0] || undefined
            : undefined
+         const normalizedImage = image?.startsWith('//') ? `https:${image}` : image
         const mediaType = element.querySelector('video, a[href*="/reel/"], a[href*="/videos/"], a[href*="/watch/"]')
           ? 'video' as const
-          : image ? 'image' as const : 'text' as const
-        return { text, href, image, mediaType }
+           : normalizedImage ? 'image' as const : 'text' as const
+         return { text, href, image: normalizedImage, mediaType }
       }))
 
       for (const article of articles) {

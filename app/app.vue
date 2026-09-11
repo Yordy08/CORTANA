@@ -222,8 +222,6 @@ async function applyCorrection(correctionId: string) {
 let correctionInterval: ReturnType<typeof setInterval> | null = null
 let publishedXInterval: ReturnType<typeof setInterval> | null = null
 let notificationInterval: ReturnType<typeof setInterval> | null = null
-let monitorInterval: ReturnType<typeof setInterval> | null = null
-const MONITOR_REFRESH_MS = 30000
 const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {
@@ -235,7 +233,7 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Render cached web data immediately, then perform the first live scrape.
+  // Only render cached data on startup. Scraping is started by "Revisar".
   loadCachedPosts()
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
@@ -243,17 +241,21 @@ onMounted(() => {
   publishedXInterval = setInterval(fetchPublishedX, 3000)
   fetchNotifications()
   notificationInterval = setInterval(fetchNotifications, 3000)
-  refreshAll(true)
-  monitorInterval = setInterval(() => refreshAll(true), MONITOR_REFRESH_MS)
 })
 
 async function loadCachedPosts() {
   try {
-    const webCache = await $fetch<MonitorResponse>('/api/monitor/web/cache')
+    const [webCache, facebookCache] = await Promise.all([
+      $fetch<MonitorResponse>('/api/monitor/web/cache'),
+      $fetch<MonitorResponse>('/api/monitor/facebook/cache')
+    ])
 
     // Do not replace a live response that arrived before the cache request.
     if (!websiteItems.value.length && webCache.items?.length) {
       websiteItems.value = webCache.items
+    }
+    if (!facebookItems.value.length && facebookCache.items?.length) {
+      facebookItems.value = facebookCache.items
     }
   } catch {
     // The live request still runs if the cache is unavailable.
@@ -264,7 +266,6 @@ onUnmounted(() => {
   if (correctionInterval) clearInterval(correctionInterval)
   if (publishedXInterval) clearInterval(publishedXInterval)
   if (notificationInterval) clearInterval(notificationInterval)
-  if (monitorInterval) clearInterval(monitorInterval)
 })
 
 async function fetchPublishedX() {
@@ -473,6 +474,25 @@ function isWebsiteUrl(link = '') {
   } catch {
     return false
   }
+}
+
+function imageUrl(image = '') {
+  try {
+    const hostname = new URL(image).hostname.toLowerCase()
+    if (hostname.includes('facebook') || hostname.includes('fbcdn') || hostname.includes('scontent') || hostname.includes('fbsbx') || hostname.includes('burbujapolitica.com')) {
+      return `/api/proxy/image?url=${encodeURIComponent(image)}`
+    }
+  } catch {}
+  return image
+}
+
+function handleImageError(event: Event, originalImage = '') {
+  const target = event.target as HTMLImageElement
+  if (originalImage && target.src !== originalImage) {
+    target.src = originalImage
+    return
+  }
+  target.style.display = 'none'
 }
 
 async function loadFacebookPosts(silent = false) {
@@ -722,7 +742,7 @@ function formatDate(isoOrLocale: string | undefined): string {
           </span>
 <span class="inline-flex items-center gap-1.5 text-accent-light">
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
-              {{ syncing ? 'Sincronizando...' : `Actualización automática cada ${MONITOR_REFRESH_MS / 1000}s` }}
+              {{ syncing ? 'Sincronizando...' : 'Listo para revisar manualmente' }}
           </span>
           <span class="inline-flex items-center gap-1.5 text-green-300">
              <span class="h-2 w-2 rounded-full bg-green-400" />
@@ -808,10 +828,10 @@ function formatDate(isoOrLocale: string | undefined): string {
                   <img
                     class="post-image"
                     :class="{ 'video-media': item.mediaType === 'video' }"
-                    :src="`/api/proxy/image?url=${encodeURIComponent(item.image)}`"
+                    :src="imageUrl(item.image)"
                     :alt="item.mediaType === 'video' ? 'Miniatura de video' : 'Imagen de publicación'"
                     loading="lazy"
-                    @error="($event.target as HTMLImageElement).style.display = 'none'"
+                    @error="handleImageError($event, item.image)"
                   >
                   <div v-if="item.mediaType === 'video'" class="video-overlay">
                      <span class="video-badge">APAGADO · VIDEO</span>
@@ -909,10 +929,10 @@ function formatDate(isoOrLocale: string | undefined): string {
                 <div v-if="item.image" class="relative">
                   <img
                     class="post-image"
-                    :src="isWebsiteUrl(item.image) ? `/api/proxy/image?url=${encodeURIComponent(item.image)}` : item.image"
+                    :src="imageUrl(item.image)"
                     alt="Imagen de publicación web"
                     loading="lazy"
-                    @error="($event.target as HTMLImageElement).style.display = 'none'"
+                    @error="handleImageError($event, item.image)"
                   >
                   <span v-if="item.category" class="category-pill category-pill-floating">{{ item.category }}</span>
                 </div>
