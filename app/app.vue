@@ -355,9 +355,11 @@ async function refreshAll(silent = false) {
 
   syncing.value = true
   if (!silent) loading.value = true
+  if (!silent) message.value = 'Consultando las publicaciones actuales de la web...'
+  if (!silent) websiteItems.value = []
 
   try {
-    await loadWebsitePosts(true)
+    await loadWebsitePosts(false)
   } finally {
     syncing.value = false
     if (!silent) loading.value = false

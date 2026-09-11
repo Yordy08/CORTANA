@@ -282,13 +282,20 @@ export default defineEventHandler(async (event) => {
   })
   const categoryByLink = new Map(uniqueCandidates.map((candidate) => [candidate.link, candidate.category]))
 
-  // Store new posts
-  const newPosts = await addNewPosts(uniqueCandidates, 'web')
-  const allPosts = await getStoredPosts('web')
+  // MongoDB is persistent, but it must not prevent a live response when it is
+  // slow or temporarily unavailable on Render.
+  let newPosts: Awaited<ReturnType<typeof addNewPosts>> = []
+  let allPosts: Awaited<ReturnType<typeof getStoredPosts>> = []
+  let storageAvailable = true
+  try {
+    newPosts = await addNewPosts(uniqueCandidates, 'web')
+    allPosts = await getStoredPosts('web')
+  } catch {
+    storageAvailable = false
+  }
+
   const currentKeys = new Set(uniqueCandidates.map((candidate) => candidate.link || candidate.text.slice(0, 80)))
   const recentPosts = allPosts
-    // MongoDB is persistent, but the visible list must represent this scrape,
-    // never stale records left from an earlier request or deployment.
     .filter((post) => isInsideTodayWindow(post) && currentKeys.has(post.link || post.text.slice(0, 80)))
     .sort((a, b) => {
       const aTime = Date.parse(a.date || a.detectedAt) || 0
@@ -296,18 +303,31 @@ export default defineEventHandler(async (event) => {
       return bTime - aTime
     })
 
-  const items: WebItem[] = recentPosts.map((post) => ({
-    id: post.id,
-    title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
-    context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
-    fullText: post.fullText || post.text,
-    leadText: post.leadText,
-    category: post.category || categoryByLink.get(post.link),
-    image: post.image,
-    link: post.link,
-    createdAt: post.date || post.detectedAt,
-    isNew: newPosts.some((np) => np.id === post.id)
-  }))
+  const items: WebItem[] = storageAvailable
+    ? recentPosts.map((post) => ({
+      id: post.id,
+      title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
+      context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
+      fullText: post.fullText || post.text,
+      leadText: post.leadText,
+      category: post.category || categoryByLink.get(post.link),
+      image: post.image,
+      link: post.link,
+      createdAt: post.date || post.detectedAt,
+      isNew: newPosts.some((np) => np.id === post.id)
+    }))
+    : uniqueCandidates.map((post, index) => ({
+      id: `web-live-${createHash('sha1').update(post.link || post.text || String(index)).digest('hex')}`,
+      title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
+      context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
+      fullText: post.fullText || post.text,
+      leadText: post.leadText,
+      category: post.category,
+      image: post.image,
+      link: post.link,
+      createdAt: post.date,
+      isNew: true
+    }))
 
   return {
     items,
@@ -315,7 +335,7 @@ export default defineEventHandler(async (event) => {
     totalStored: items.length,
     newDetected: newPosts.length,
     message: newPosts.length > 0
-       ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
+      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
        : `Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
   }
 })
