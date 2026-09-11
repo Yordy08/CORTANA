@@ -285,8 +285,11 @@ export default defineEventHandler(async (event) => {
   // Store new posts
   const newPosts = await addNewPosts(uniqueCandidates, 'web')
   const allPosts = await getStoredPosts('web')
+  const currentKeys = new Set(uniqueCandidates.map((candidate) => candidate.link || candidate.text.slice(0, 80)))
   const recentPosts = allPosts
-    .filter(isInsideTodayWindow)
+    // MongoDB is persistent, but the visible list must represent this scrape,
+    // never stale records left from an earlier request or deployment.
+    .filter((post) => isInsideTodayWindow(post) && currentKeys.has(post.link || post.text.slice(0, 80)))
     .sort((a, b) => {
       const aTime = Date.parse(a.date || a.detectedAt) || 0
       const bTime = Date.parse(b.date || b.detectedAt) || 0
@@ -309,7 +312,7 @@ export default defineEventHandler(async (event) => {
   return {
     items,
     source: 'web',
-    totalStored: allPosts.length,
+    totalStored: items.length,
     newDetected: newPosts.length,
     message: newPosts.length > 0
        ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
