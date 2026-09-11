@@ -26,6 +26,18 @@ type GraphPost = {
   }
 }
 
+function firstImageUrlFromAttributes(get: (name: string) => string | undefined): string | undefined {
+  const srcset = get('srcset') || get('data-srcset')
+  const src = get('src') || get('data-src') || get('data-original')
+  const candidate = srcset?.split(',')[0]?.trim().split(/\s+/)[0] || src
+  return candidate?.startsWith('http') ? candidate : undefined
+}
+
+function getGraphImage(post: GraphPost): string | undefined {
+  const attachment = post.attachments?.data?.[0]
+  return post.full_picture || attachment?.media?.image?.src
+}
+
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.147 Mobile Safari/537.36'
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 
@@ -86,7 +98,7 @@ async function scrapeFacebookGraphPage(pageUrl: string): Promise<{
 
     const posts = (payload.data || []).map((post) => ({
       text: cleanText(post.message || '(Publicación sin texto visible)'),
-      image: post.full_picture || post.attachments?.data?.[0]?.media?.image?.src,
+      image: getGraphImage(post),
       date: post.created_time,
       link: post.permalink_url || pageUrl,
       mediaType: graphAttachmentIsVideo(post) ? 'video' as const : post.full_picture ? 'image' as const : 'text' as const
@@ -173,7 +185,10 @@ function parseMbasicPosts($: cheerio.CheerioAPI): FacebookPost[] {
       text = cleanText($el.text())
     }
 
-    const image = $el.find('img[src*="fbcdn"], img[src*="scontent"], img[src*="fbexternal"]').first().attr('src')
+    const image = firstImageUrlFromAttributes((name) => $el.find('img').filter((_i, img) => {
+      const value = $(img).attr(name) || ''
+      return value.includes('fbcdn') || value.includes('scontent') || value.includes('fbexternal') || value.includes('fbsbx')
+    }).first().attr(name))
     const date = $el.find('abbr, time').first().attr('title')
       || cleanText($el.find('abbr, time').first().text())
       || undefined
@@ -205,7 +220,10 @@ function parseMobilePosts($: cheerio.CheerioAPI): FacebookPost[] {
     }
 
     const text = cleanText(container.text())
-    const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+    const image = firstImageUrlFromAttributes((name) => container.find('img').filter((_i, img) => {
+      const value = $(img).attr(name) || ''
+      return value.includes('fbcdn') || value.includes('scontent') || value.includes('fbsbx')
+    }).first().attr(name))
     const date = container.find('abbr, time').first().attr('title')
       || cleanText(container.find('abbr, time').first().text())
       || undefined
@@ -235,7 +253,10 @@ function parseDesktopPosts($: cheerio.CheerioAPI): FacebookPost[] {
     }
 
     const text = cleanText(container.text())
-    const image = container.find('img[src*="fbcdn"], img[src*="scontent"]').first().attr('src')
+    const image = firstImageUrlFromAttributes((name) => container.find('img').filter((_i, img) => {
+      const value = $(img).attr(name) || ''
+      return value.includes('fbcdn') || value.includes('scontent') || value.includes('fbsbx')
+    }).first().attr(name))
     const date = container.find('abbr, time').first().attr('title')
       || cleanText(container.find('abbr, time').first().text())
       || undefined
@@ -435,14 +456,14 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
         }
 
         function bestImage(element: Element) {
-          const imgs = Array.from(element.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]'))
-            .map((img) => ({
-              src: img.getAttribute('src') || '',
+          const imgs = Array.from(element.querySelectorAll('img'))
+             .map((img) => ({
+               src: img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0] || '',
               w: Number(img.getAttribute('width') || 0),
               h: Number(img.getAttribute('height') || 0),
               alt: img.getAttribute('alt') || ''
             }))
-            .filter((img) => img.src && !img.alt.toLowerCase().includes('foto del perfil'))
+             .filter((img) => img.src && !img.alt.toLowerCase().includes('foto del perfil') && /fbcdn|scontent|fbsbx|facebook/i.test(img.src))
             .sort((a, b) => (b.w * b.h) - (a.w * a.h))
           return imgs[0]?.src || undefined
         }
@@ -545,7 +566,10 @@ export async function scrapeFacebookPage(pageUrl: string): Promise<{
           .trim()
         const linkElement = element.querySelector('a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"], a[href*="/stories/"], a[href*="/photo/"]')
         const href = linkElement?.getAttribute('href') || ''
-        const image = element.querySelector('img[src*="scontent"], img[src*="fbcdn"]')?.getAttribute('src') || undefined
+         const imageElement = element.querySelector('img')
+         const image = imageElement
+           ? imageElement.getAttribute('src') || imageElement.getAttribute('data-src') || imageElement.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0] || undefined
+           : undefined
         const mediaType = element.querySelector('video, a[href*="/reel/"], a[href*="/videos/"], a[href*="/watch/"]')
           ? 'video' as const
           : image ? 'image' as const : 'text' as const

@@ -1,4 +1,4 @@
-op <script setup lang="ts">
+<script setup lang="ts">
 type MonitorItem = {
   id: string
   title?: string
@@ -218,12 +218,12 @@ async function applyCorrection(correctionId: string) {
   } catch {}
 }
 
-// Periodic checking (manual scraping only; these intervals handle
-// notifications/corrections/published-X, not the monitor scrape)
+// All monitor sources are refreshed in the background so the dashboard stays current.
 let correctionInterval: ReturnType<typeof setInterval> | null = null
 let publishedXInterval: ReturnType<typeof setInterval> | null = null
 let notificationInterval: ReturnType<typeof setInterval> | null = null
-const FACEBOOK_REFRESH_MS = 15000
+let monitorInterval: ReturnType<typeof setInterval> | null = null
+const MONITOR_REFRESH_MS = 30000
 const lastFacebookSyncAt = ref(0)
 
 onMounted(() => {
@@ -235,7 +235,7 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Render the last known posts immediately. The actual scrape is manual.
+  // Render cached web data immediately, then perform the first live scrape.
   loadCachedPosts()
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
@@ -243,6 +243,8 @@ onMounted(() => {
   publishedXInterval = setInterval(fetchPublishedX, 3000)
   fetchNotifications()
   notificationInterval = setInterval(fetchNotifications, 3000)
+  refreshAll(true)
+  monitorInterval = setInterval(() => refreshAll(true), MONITOR_REFRESH_MS)
 })
 
 async function loadCachedPosts() {
@@ -262,6 +264,7 @@ onUnmounted(() => {
   if (correctionInterval) clearInterval(correctionInterval)
   if (publishedXInterval) clearInterval(publishedXInterval)
   if (notificationInterval) clearInterval(notificationInterval)
+  if (monitorInterval) clearInterval(monitorInterval)
 })
 
 async function fetchPublishedX() {
@@ -349,7 +352,7 @@ async function unmarkPublishedOnX(postId: string) {
 }
 
 async function refreshActiveView(silent = false) {
-  await loadWebsitePosts(silent)
+  await (activeView.value === 'facebook' ? loadFacebookPosts(silent) : loadWebsitePosts(silent))
 }
 
 async function refreshAll(silent = false) {
@@ -359,7 +362,7 @@ async function refreshAll(silent = false) {
   if (!silent) loading.value = true
 
   try {
-    await loadWebsitePosts(true)
+    await Promise.all([loadFacebookPosts(true), loadWebsitePosts(true)])
   } finally {
     syncing.value = false
     if (!silent) loading.value = false
@@ -481,9 +484,7 @@ async function loadFacebookPosts(silent = false) {
       cache: 'no-store'
     })
 
-    if (response.items?.length) {
-      facebookItems.value = response.items
-    }
+    facebookItems.value = response.items || []
 
     lastFacebookSyncAt.value = Date.now()
 
@@ -517,9 +518,7 @@ async function loadWebsitePosts(silent = false) {
       cache: 'no-store'
     })
 
-    if (response.items?.length) {
-      websiteItems.value = response.items
-    }
+    websiteItems.value = response.items || []
 
     message.value = response.message || ''
 
@@ -723,7 +722,7 @@ function formatDate(isoOrLocale: string | undefined): string {
           </span>
 <span class="inline-flex items-center gap-1.5 text-accent-light">
             <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
-             {{ syncing ? 'Sincronizando...' : 'Actualización manual — pulsa "Revisar"' }}
+              {{ syncing ? 'Sincronizando...' : `Actualización automática cada ${MONITOR_REFRESH_MS / 1000}s` }}
           </span>
           <span class="inline-flex items-center gap-1.5 text-green-300">
              <span class="h-2 w-2 rounded-full bg-green-400" />
@@ -731,7 +730,7 @@ function formatDate(isoOrLocale: string | undefined): string {
            </span>
            <span class="inline-flex items-center gap-1.5 text-accent-light">
              <span class="h-2 w-2 rounded-full bg-accent-light" />
-             Publicaciones web: {{ websiteItems.length }}
+              Facebook: {{ facebookItems.length }} · Web: {{ websiteItems.length }}
            </span>
            <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
@@ -754,8 +753,15 @@ function formatDate(isoOrLocale: string | undefined): string {
         <div class="glass-card p-5 md:p-6">
           <!-- Tab bar -->
           <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-6">
-            <div class="glass-tabs">
-              <button
+             <div class="glass-tabs">
+               <button
+                 class="glass-tab"
+                 :class="{ active: activeView === 'facebook' }"
+                 @click="activeView = 'facebook'"
+               >
+                 Facebook
+               </button>
+               <button
                 class="glass-tab"
                 :class="{ active: activeView === 'web' }"
                  @click="activeView = 'web'"
@@ -802,9 +808,10 @@ function formatDate(isoOrLocale: string | undefined): string {
                   <img
                     class="post-image"
                     :class="{ 'video-media': item.mediaType === 'video' }"
-                    :src="item.image"
+                    :src="`/api/proxy/image?url=${encodeURIComponent(item.image)}`"
                     :alt="item.mediaType === 'video' ? 'Miniatura de video' : 'Imagen de publicación'"
                     loading="lazy"
+                    @error="($event.target as HTMLImageElement).style.display = 'none'"
                   >
                   <div v-if="item.mediaType === 'video'" class="video-overlay">
                      <span class="video-badge">APAGADO · VIDEO</span>
@@ -905,6 +912,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                     :src="isWebsiteUrl(item.image) ? `/api/proxy/image?url=${encodeURIComponent(item.image)}` : item.image"
                     alt="Imagen de publicación web"
                     loading="lazy"
+                    @error="($event.target as HTMLImageElement).style.display = 'none'"
                   >
                   <span v-if="item.category" class="category-pill category-pill-floating">{{ item.category }}</span>
                 </div>
