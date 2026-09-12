@@ -578,10 +578,11 @@ function triggerNotification(title: string, body: string) {
   }
 }
 
-async function copyLink(link = '', postId = '') {
+async function copyLink(link = '', postId = '', title = '') {
   if (!link) return
+  const textToCopy = `${title.trim()} ${link.trim()}`.trim()
   try {
-    await navigator.clipboard.writeText(link.trim())
+    await navigator.clipboard.writeText(textToCopy)
     if (postId) {
       await $fetch('/api/published-x', {
         method: 'POST',
@@ -596,7 +597,7 @@ async function copyLink(link = '', postId = '') {
   } catch {
     // Clipboard access can be denied by the browser outside a secure context.
     const textarea = document.createElement('textarea')
-    textarea.value = link.trim()
+    textarea.value = textToCopy
     textarea.style.position = 'fixed'
     textarea.style.opacity = '0'
     document.body.appendChild(textarea)
@@ -984,9 +985,9 @@ function formatDate(isoOrLocale: string | undefined): string {
                     <button
                        v-if="item.link && !isPublishedOnX(item.id)"
                        class="btn-primary text-xs !px-3 !py-1.5"
-                        @click="copyLink(item.link, item.id)"
+                         @click="copyLink(item.link, item.id, item.title)"
                       >
-                        {{ copiedLinkId === item.id ? 'Enlace copiado' : 'Copiar enlace' }}
+                         {{ copiedLinkId === item.id ? 'Título y enlace copiados' : 'Copiar título y enlace' }}
                      </button>
 
                      <button
