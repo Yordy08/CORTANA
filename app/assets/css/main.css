@@ -436,13 +436,17 @@
   }
 
   @media (max-width: 640px) {
+    .metrics-grid {
+      display: none;
+    }
+
     .monitor-header .header-status,
     .monitor-header .header-last-check {
       @apply flex-1;
     }
 
     .monitor-header .review-cta {
-      @apply order-first w-full;
+      @apply order-first w-auto;
     }
 
     .section-actions {
