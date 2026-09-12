@@ -234,9 +234,9 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Render the data already available on the server. The Revisar button only
-  // reloads this page and never starts a scraping request.
+  // Show cached data immediately, then synchronize with the live web source.
   loadCachedPosts()
+  loadWebsitePosts(true)
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
   fetchPublishedX()
@@ -366,10 +366,6 @@ async function refreshAll(silent = false) {
     syncing.value = false
     if (!silent) loading.value = false
   }
-}
-
-function refreshPage() {
-  window.location.reload()
 }
 
 const ignoredComparableWords = new Set([
@@ -675,7 +671,7 @@ function formatDate(isoOrLocale: string | undefined): string {
               <button
                 class="btn-revisar whitespace-nowrap"
                 :disabled="syncing"
-                @click="refreshPage"
+                @click="refreshAll"
               >
                 {{ syncing ? 'Revisando...' : 'Revisar' }}
               </button>
