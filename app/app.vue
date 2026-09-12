@@ -164,7 +164,7 @@ function getCorrectionValue(item: MonitorItem, field: string) {
 
 function changeSuggestField() {
   if (suggestMode.value === 'error') {
-    suggestValue.value = ERROR_FIELDS.find((field) => field.value === suggestField.value)?.label || ''
+    suggestValue.value = suggestField.value === 'delete' ? 'Eliminar publicación' : ''
     return
   }
 
@@ -172,7 +172,9 @@ function changeSuggestField() {
 }
 
 async function submitSuggestion() {
-  if (!suggestItem.value || (suggestMode.value === 'category' && !suggestValue.value.trim())) return
+  if (!suggestItem.value || suggestMode.value === 'choose') return
+  if (suggestMode.value === 'category' && !suggestValue.value.trim()) return
+  if (suggestMode.value === 'error' && suggestField.value !== 'delete' && !suggestValue.value.trim()) return
   const { item, source } = suggestItem.value
   try {
     await $fetch('/api/corrections/create', {
@@ -182,7 +184,7 @@ async function submitSuggestion() {
         source,
         field: suggestField.value,
         currentValue: getCorrectionValue(item, suggestField.value),
-        suggestedValue: suggestValue.value.trim() || 'Error reportado'
+        suggestedValue: suggestValue.value.trim() || 'Eliminar publicación'
       }
     })
     await fetchCorrections()
@@ -236,7 +238,7 @@ onMounted(() => {
 
   // Show cached data immediately, then synchronize with the live web source.
   loadCachedPosts()
-  loadWebsitePosts(true)
+  refreshAll(true)
   fetchCorrections()
   correctionInterval = setInterval(fetchCorrections, 3000)
   fetchPublishedX()
@@ -250,7 +252,7 @@ async function loadCachedPosts() {
     const webCache = await $fetch<MonitorResponse>('/api/monitor/web/cache')
 
     // Do not replace a live response that arrived before the cache request.
-    if (!websiteItems.value.length && webCache.items?.length) {
+    if (!syncing.value && !websiteItems.value.length && webCache.items?.length) {
       websiteItems.value = webCache.items
     }
   } catch {
@@ -358,8 +360,6 @@ async function refreshAll(silent = false) {
   syncing.value = true
   if (!silent) loading.value = true
   if (!silent) message.value = 'Consultando las publicaciones actuales de la web...'
-  if (!silent) websiteItems.value = []
-
   try {
     await loadWebsitePosts(false)
   } finally {
@@ -536,7 +536,15 @@ async function loadWebsitePosts(silent = false) {
       cache: 'no-store'
     })
 
-    websiteItems.value = response.items || []
+    const receivedItems = response.items || []
+    const webDayClosed = response.message?.includes('La jornada web está cerrada.')
+
+    // A transient Vercel/serverless response can be empty while the source or
+    // MongoDB is still warming up. Keep the visible list instead of making
+    // the publications disappear; an explicit closed-day response may clear it.
+    if (receivedItems.length || !websiteItems.value.length || webDayClosed) {
+      websiteItems.value = receivedItems
+    }
 
     message.value = response.message || ''
 
@@ -577,19 +585,9 @@ function triggerNotification(title: string, body: string) {
 async function copyLink(link = '', postId = '', title = '') {
   if (!link) return
   const textToCopy = `${title.trim()} ${link.trim()}`.trim()
+
   try {
     await navigator.clipboard.writeText(textToCopy)
-    if (postId) {
-      await $fetch('/api/published-x', {
-        method: 'POST',
-        body: { postId }
-      })
-      await fetchPublishedX()
-    }
-    copiedLinkId.value = postId
-    setTimeout(() => {
-      if (copiedLinkId.value === postId) copiedLinkId.value = ''
-    }, 1500)
   } catch {
     // Clipboard access can be denied by the browser outside a secure context.
     const textarea = document.createElement('textarea')
@@ -598,13 +596,30 @@ async function copyLink(link = '', postId = '', title = '') {
     textarea.style.opacity = '0'
     document.body.appendChild(textarea)
     textarea.select()
-    document.execCommand('copy')
+    const copied = document.execCommand('copy')
     textarea.remove()
-    copiedLinkId.value = postId
-    setTimeout(() => {
-      if (copiedLinkId.value === postId) copiedLinkId.value = ''
-    }, 1500)
+    if (!copied) {
+      message.value = 'No se pudo copiar el título y el enlace.'
+      return
+    }
   }
+
+  if (postId) {
+    try {
+      await $fetch('/api/published-x', {
+        method: 'POST',
+        body: { postId }
+      })
+      await fetchPublishedX()
+    } catch {
+      message.value = 'Se copió el contenido, pero no se pudo marcar como publicado en X.'
+    }
+  }
+
+  copiedLinkId.value = postId
+  setTimeout(() => {
+    if (copiedLinkId.value === postId) copiedLinkId.value = ''
+  }, 1500)
 }
 
 async function installApp() {
@@ -1092,23 +1107,36 @@ function formatDate(isoOrLocale: string | undefined): string {
                    </option>
                  </select>
                </div>
-               <div v-if="suggestMode === 'category' || suggestField === 'category'">
-               <label class="block text-xs font-medium text-muted mb-1.5">Nueva categoría</label>
-               <select
-                v-model="suggestValue"
-                class="input-field text-sm !text-white !bg-white/20" style="color-scheme: dark"
-              >
-                <option value="" disabled selected>Seleccionar categoría...</option>
-                 <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
-               </select>
-             </div>
-             </template>
+                <div v-if="suggestMode === 'category'">
+                  <label class="block text-xs font-medium text-muted mb-1.5">Nueva categoría</label>
+                  <select
+                    v-model="suggestValue"
+                    class="input-field text-sm !text-white !bg-white/20" style="color-scheme: dark"
+                  >
+                    <option value="" disabled>Seleccionar categoría...</option>
+                    <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
+                  </select>
+                </div>
+                <div v-else-if="suggestField !== 'delete'">
+                  <label class="block text-xs font-medium text-muted mb-1.5">
+                    {{ suggestField === 'image' ? 'Nueva URL de imagen' : suggestField === 'title' ? 'Nuevo título' : 'Nuevo texto' }}
+                  </label>
+                  <textarea
+                    v-model="suggestValue"
+                    class="input-field min-h-24 resize-y text-sm"
+                    :placeholder="suggestField === 'image' ? 'https://...' : 'Escribe el valor correcto...'"
+                  />
+                </div>
+                <p v-else class="rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
+                  Al aplicar esta corrección se eliminará la publicación de la base de datos.
+                </p>
+              </template>
             <div class="flex gap-3 justify-end pt-2">
               <button class="btn-secondary text-sm" @click="closeSuggest">Cancelar</button>
                <button
                  v-if="suggestMode !== 'choose'"
                  class="btn-primary text-sm"
-                  :disabled="suggestMode === 'category' && !suggestValue.trim()"
+                  :disabled="suggestMode === 'category' && !suggestValue.trim() || suggestMode === 'error' && suggestField !== 'delete' && !suggestValue.trim()"
                 @click="submitSuggestion"
               >
                 Enviar sugerencia
@@ -1120,7 +1148,7 @@ function formatDate(isoOrLocale: string | undefined): string {
         <!-- Footer -->
         <footer class="mt-8 text-center text-xs text-muted-dark">
            <p>Cortana Monitor v2 &mdash; Monitor de publicaciones web</p>
-          <p class="mt-1">Los datos se almacenan localmente en el servidor.</p>
+           <p class="mt-1">Los datos se almacenan en MongoDB.</p>
         </footer>
       </main>
     </div>
