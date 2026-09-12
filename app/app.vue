@@ -83,6 +83,51 @@ const suggestItem = ref<{ item: MonitorItem; source: 'facebook' | 'web' } | null
 const suggestField = ref('category')
 const suggestValue = ref('')
 const suggestMode = ref<'choose' | 'error' | 'category'>('choose')
+const postFilter = ref<'all' | 'new'>('all')
+const loadingPhase = ref('Consultando Burbujapolitica.com...')
+const toast = ref<{ title: string; body: string } | null>(null)
+let loadingPhaseTimer: ReturnType<typeof setInterval> | null = null
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+const loadingPhases = [
+  'Consultando Burbujapolitica.com...',
+  'Buscando publicaciones de hoy...',
+  'Procesando publicaciones...',
+  'Guardando nuevas publicaciones...'
+]
+
+const displayedWebsiteItems = computed(() => postFilter.value === 'new'
+  ? websiteItems.value.filter((item) => item.isNew)
+  : websiteItems.value)
+
+const latestWebsiteItem = computed(() => websiteItems.value[0])
+const currentDateLabel = computed(() => new Intl.DateTimeFormat('es-CO', {
+  timeZone: 'America/Bogota',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric'
+}).format(new Date()))
+
+function showReviewToast(title: string, body: string) {
+  toast.value = { title, body }
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toast.value = null }, 5000)
+}
+
+function startReviewVisuals() {
+  loadingPhase.value = loadingPhases[0]
+  let phase = 0
+  if (loadingPhaseTimer) clearInterval(loadingPhaseTimer)
+  loadingPhaseTimer = setInterval(() => {
+    phase = Math.min(phase + 1, loadingPhases.length - 1)
+    loadingPhase.value = loadingPhases[phase]
+  }, 900)
+}
+
+function stopReviewVisuals() {
+  if (loadingPhaseTimer) clearInterval(loadingPhaseTimer)
+  loadingPhaseTimer = null
+}
 
 const CATEGORIES = [
   'Ambiente',
@@ -265,6 +310,8 @@ onUnmounted(() => {
   if (correctionInterval) clearInterval(correctionInterval)
   if (publishedXInterval) clearInterval(publishedXInterval)
   if (notificationInterval) clearInterval(notificationInterval)
+  if (loadingPhaseTimer) clearInterval(loadingPhaseTimer)
+  if (toastTimer) clearTimeout(toastTimer)
 })
 
 async function fetchPublishedX() {
@@ -359,11 +406,19 @@ async function refreshAll(silent = false) {
   if (syncing.value) return
 
   syncing.value = true
+  startReviewVisuals()
   if (!silent) loading.value = true
   if (!silent) message.value = 'Consultando las publicaciones actuales de la web...'
   try {
-    await loadWebsitePosts(false)
+    await loadWebsitePosts(silent)
+    if (!silent) {
+      showReviewToast(
+        'Revisión completada',
+        newCount.value > 0 ? `${newCount.value} publicación(es) nueva(s) encontrada(s)` : 'No hay publicaciones nuevas'
+      )
+    }
   } finally {
+    stopReviewVisuals()
     syncing.value = false
     if (!silent) loading.value = false
   }
@@ -549,8 +604,8 @@ async function loadWebsitePosts(silent = false) {
 
     message.value = response.message || ''
 
-    if (response.newDetected && response.newDetected > 0) {
-      newCount.value = response.newDetected
+    newCount.value = response.newDetected || 0
+    if (newCount.value > 0) {
       showNewBadge.value = true
       triggerNotification(
         'Nuevas publicaciones en la web',
@@ -647,10 +702,21 @@ function formatDate(isoOrLocale: string | undefined): string {
   }
   return isoOrLocale
 }
+
+function formatTime(isoOrLocale: string | undefined): string {
+  if (!isoOrLocale) return 'Sin hora'
+  const date = new Date(isoOrLocale)
+  if (Number.isNaN(date.getTime())) return 'Sin hora'
+  return date.toLocaleTimeString('es-CO', {
+    timeZone: 'America/Bogota',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
 </script>
 
 <template>
-  <div class="min-h-screen bg-surface text-white antialiased">
+  <div class="monitor-app min-h-screen bg-surface text-white antialiased">
     <!-- Background gradient -->
     <div class="fixed inset-0 pointer-events-none bg-gradient-to-br from-accent/20 via-transparent to-transparent" />
 
@@ -658,40 +724,53 @@ function formatDate(isoOrLocale: string | undefined): string {
       <!-- Install Banner -->
       <div
         v-if="installPrompt"
-        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md"
+        class="install-banner fixed bottom-5 left-1/2 z-50 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2"
       >
-        <div class="glass-card p-4 flex items-center gap-3">
+        <div class="glass-card install-card flex items-center gap-4 p-4 md:p-5">
           <div class="flex-1">
-            <p class="text-sm font-medium">Instalar Cortana Monitor</p>
+            <p class="text-sm font-semibold text-white">Instala Cortana Monitor</p>
             <p class="text-xs text-muted">Acceso rápido desde tu pantalla de inicio</p>
           </div>
           <button class="btn-primary text-sm !px-3 !py-1.5" @click="installApp">
             Instalar
           </button>
-          <button class="btn-ghost text-sm !px-2" @click="installPrompt = null">
-            ✕
+          <button class="btn-ghost close-button text-sm !px-2" aria-label="Cerrar aviso" @click="installPrompt = null">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg>
           </button>
         </div>
       </div>
 
-      <main class="mx-auto max-w-4xl px-4 py-6 md:py-10">
+      <main class="monitor-shell mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
+        <Transition name="toast-slide">
+          <div v-if="toast" class="review-toast" role="status">
+            <span class="toast-check">✓</span>
+            <span><strong>{{ toast.title }}</strong><small>{{ toast.body }}</small></span>
+          </div>
+        </Transition>
         <!-- Header -->
-        <header class="glass-card p-6 md:p-8 mb-6 hero-gradient">
+        <header class="monitor-header mb-5">
           <div class="flex flex-col md:flex-row gap-4 md:items-end md:justify-between">
-            <div class="space-y-3">
-              <h1 class="text-3xl md:text-4xl font-bold tracking-tight">
+            <div class="space-y-2">
+              <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a7 7 0 0 0-4 12.75V19h8v-3.25A7 7 0 0 0 12 3Z"/><path d="M9 22h6M9 12h6M10 16h4"/></svg></span><span class="eyebrow">Media intelligence</span></div>
+              <h1 class="text-3xl md:text-5xl font-bold tracking-tight">
                 Cortana Monitor
               </h1>
+              <p class="text-sm text-muted md:text-base">Monitoreo inteligente de publicaciones</p>
             </div>
-<div class="flex flex-wrap items-center gap-2">
+<div class="flex flex-wrap items-center gap-3">
+              <div class="header-status"><span class="status-dot" /><span><strong>Activo</strong><small>Sistema operativo</small></span></div>
+              <div v-if="lastCheckedAt" class="header-last-check"><span class="header-label">Última revisión</span><strong>{{ lastCheckedAt }}</strong></div>
               <button
-                class="btn-revisar whitespace-nowrap"
+                class="btn-revisar review-cta whitespace-nowrap"
                 :disabled="syncing"
                 @click="refreshAll"
               >
-                {{ syncing ? 'Revisando...' : 'Revisar' }}
+                <svg v-if="syncing" class="button-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 1-6.36 2.64"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 1-2.34-5.66"/><path d="M20 4v7h-7"/></svg>
+                {{ syncing ? 'Revisando...' : (lastCheckedAt ? 'Revisar nuevamente' : 'Revisar') }}
               </button>
               <button class="btn-secondary whitespace-nowrap" @click="showNotificationPanel = true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
                 Notificar
               </button>
               <button
@@ -699,7 +778,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                 class="btn-primary whitespace-nowrap"
                 @click="installApp"
               >
-                📲 Instalar app
+                Instalar app
               </button>
             </div>
           </div>
@@ -756,26 +835,11 @@ function formatDate(isoOrLocale: string | undefined): string {
         </div>
 
          <!-- Status Bar -->
-        <div class="flex flex-wrap items-center gap-3 mb-6 text-sm text-muted">
-          <span class="inline-flex items-center gap-1.5">
-            <span class="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-            Activo
-          </span>
-          <span v-if="lastCheckedAt" class="text-muted-dark">
-            Última revisión: {{ lastCheckedAt }}
-          </span>
-<span class="inline-flex items-center gap-1.5 text-accent-light">
-            <span class="h-2 w-2 rounded-full" :class="syncing ? 'bg-blue-300 animate-ping' : 'bg-blue-400'" />
-              {{ syncing ? 'Sincronizando...' : 'Listo para revisar manualmente' }}
-          </span>
-          <span class="inline-flex items-center gap-1.5 text-green-300">
-             <span class="h-2 w-2 rounded-full bg-green-400" />
-             Publicadas en X hoy: {{ dailyPublishedXCount }}
-           </span>
-           <span class="inline-flex items-center gap-1.5 text-accent-light">
-             <span class="h-2 w-2 rounded-full bg-accent-light" />
-              Publicaciones web: {{ websiteItems.length }}
-           </span>
+         <div class="status-strip mb-6">
+           <span class="status-strip-item"><span class="status-dot" /> {{ syncing ? 'Sincronizando...' : 'Sistema activo' }}</span>
+           <span class="status-strip-item"><span class="status-dot status-dot-blue" /> Conectado · Burbujapolitica.com</span>
+           <span class="status-strip-item status-strip-muted">Publicaciones web: {{ websiteItems.length }}</span>
+           <span class="status-strip-item status-strip-muted">Publicadas en X hoy: {{ dailyPublishedXCount }}</span>
            <span v-if="newCount > 0" class="badge-new">
             {{ newCount }} {{ newCount === 1 ? 'nueva' : 'nuevas' }}
           </span>
@@ -793,21 +857,33 @@ function formatDate(isoOrLocale: string | undefined): string {
 
 
 
-        <!-- Tabs + Posts -->
-        <div class="glass-card p-5 md:p-6">
-          <!-- Tab bar -->
-          <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-6">
-             <div class="glass-tabs">
-               <button
-                class="glass-tab"
-                :class="{ active: activeView === 'web' }"
-                 @click="activeView = 'web'"
-              >
-                Web
-              </button>
-            </div>
+         <section class="metrics-grid mb-8" aria-label="Resumen del monitoreo">
+           <div class="metric-card metric-card-primary"><div class="metric-top"><span>Publicaciones de hoy</span><span class="metric-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 13h6M8 17h4"/></svg></span></div><strong>{{ websiteItems.length }}</strong><small><span class="metric-live-dot" /> Burbujapolitica.com</small></div>
+           <div class="metric-card"><div class="metric-top"><span>Nuevas</span><span class="metric-icon metric-icon-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14"/></svg></span></div><strong>{{ newCount }}</strong><small>{{ newCount ? 'Desde la última revisión' : 'Sin novedades recientes' }}</small></div>
+           <div class="metric-card"><div class="metric-top"><span>Última publicación</span><span class="metric-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span></div><strong>{{ formatTime(websiteItems[0]?.createdAt) }}</strong><small class="line-clamp-1">{{ websiteItems[0]?.title || 'Esperando publicaciones' }}</small></div>
+           <div class="metric-card"><div class="metric-top"><span>Última revisión</span><span class="metric-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 12a8 8 0 0 1 15-4"/><path d="M20 5v5h-5M20 12a8 8 0 0 1-15 4"/><path d="M4 19v-5h5"/></svg></span></div><strong>{{ lastCheckedAt || 'Pendiente' }}</strong><small>{{ lastCheckedAt ? 'Datos actualizados' : 'Presiona Revisar para comenzar' }}</small></div>
+         </section>
 
-          </div>
+         <!-- Tabs + Posts -->
+         <div class="content-panel p-4 md:p-7">
+           <!-- Section heading and filters -->
+           <div class="section-heading mb-6">
+             <div>
+               <p class="section-kicker">Fuente monitoreada · Burbujapolitica.com</p>
+               <h2>Publicaciones de hoy</h2>
+               <p>{{ currentDateLabel }} <span class="heading-separator">·</span> {{ websiteItems.length }} publicaciones encontradas</p>
+             </div>
+             <div class="section-actions">
+               <div class="glass-tabs">
+                 <button class="glass-tab" :class="{ active: postFilter === 'all' }" @click="postFilter = 'all'">Todas</button>
+                 <button class="glass-tab" :class="{ active: postFilter === 'new' }" @click="postFilter = 'new'">Nuevas <span v-if="newCount">{{ newCount }}</span></button>
+               </div>
+               <button class="btn-secondary refresh-button" :disabled="syncing" @click="refreshAll">
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 1-2.34-5.66"/><path d="M20 4v7h-7"/></svg>
+                 Actualizar
+               </button>
+             </div>
+           </div>
 
           <!-- Message -->
           <div
@@ -818,9 +894,11 @@ function formatDate(isoOrLocale: string | undefined): string {
           </div>
 
           <!-- Loading -->
-          <div v-if="loading" class="loading-spinner">
-            {{ getLoadingText() }}
-          </div>
+           <div v-if="loading" class="review-progress">
+             <div class="progress-orbit"><span /><span /><span /></div>
+             <div><strong>{{ loadingPhase }}</strong><p>La información se está sincronizando de forma segura.</p></div>
+             <div class="progress-track"><span /></div>
+           </div>
 
           <!-- Facebook Posts -->
           <template v-else-if="activeView === 'facebook'">
@@ -914,7 +992,8 @@ function formatDate(isoOrLocale: string | undefined): string {
             </div>
 
             <!-- Quick link to open Facebook -->
-            <div class="mt-6 pt-4 border-t border-white/10 text-center">
+            <div class="source-panel mt-8">
+              <div><span class="section-kicker">Fuente monitoreada</span><strong>Burbujapolitica.com</strong><small><span class="status-dot status-dot-blue" /> Conectado</small></div>
               <a
                 :href="FACEBOOK_URL"
                 target="_blank"
@@ -928,16 +1007,24 @@ function formatDate(isoOrLocale: string | undefined): string {
 
           <!-- Web Posts -->
           <template v-else-if="activeView === 'web'">
-            <div v-if="websiteItems.length === 0" class="py-12 text-center text-muted">
-              <p class="text-lg mb-2">No hay publicaciones aún</p>
-              <p class="text-sm text-muted-dark">Presiona "Revisar" para consultar la web.</p>
+            <div v-if="websiteItems.length === 0" class="empty-state">
+              <div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 5h16v14H4z"/><path d="m7 9 3 3 2-2 5 5M7 16h10"/></svg></div>
+              <h3>No hay publicaciones cargadas</h3>
+              <p>Presiona “Revisar” para consultar las publicaciones de hoy en Burbujapolitica.com.</p>
+              <button class="btn-revisar" :disabled="syncing" @click="refreshAll">Revisar publicaciones</button>
             </div>
 
-            <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div v-else-if="displayedWebsiteItems.length === 0" class="empty-state compact-empty">
+              <div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 5h14v14H5z"/><path d="M8 12h8"/></svg></div>
+              <h3>No hay publicaciones nuevas</h3>
+              <p>La última revisión no encontró novedades.</p>
+            </div>
+
+            <div v-else class="posts-grid">
               <article
-                v-for="item in websiteItems"
+                v-for="item in displayedWebsiteItems"
                 :key="item.id"
-                class="post-card"
+                class="post-card post-card-web"
               >
                 <div v-if="item.isNew" class="relative">
                   <span class="badge-new absolute top-3 left-3 z-10">NUEVO</span>
@@ -953,11 +1040,13 @@ function formatDate(isoOrLocale: string | undefined): string {
                   >
                   <span v-if="item.category" class="category-pill category-pill-floating">{{ item.category }}</span>
                 </div>
+                <div v-else class="post-image-placeholder" aria-label="Sin imagen disponible">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 5h16v14H4z"/><path d="m7 15 3-3 2 2 2-2 3 3"/><circle cx="9" cy="9" r="1"/></svg>
+                  <span>Sin imagen</span>
+                </div>
 
                 <div class="p-4 space-y-2">
-                  <div class="source-buttons">
-                   <span class="source-pill source-pill-ok">WEB</span>
-                  </div>
+                   <div class="post-meta-row"><span class="source-pill source-pill-ok">WEB</span><span v-if="item.category" class="post-category">{{ item.category }}</span><span class="post-time">{{ formatTime(item.createdAt) }}</span></div>
 
                   <div v-if="correctionsFor(item.id).length" class="flex flex-wrap gap-2">
                     <div
@@ -988,11 +1077,8 @@ function formatDate(isoOrLocale: string | undefined): string {
                    >
                      ✔️ | Publicado en X
                    </p>
-                   <p class="text-xs text-muted-dark">
-                     {{ formatDate(item.createdAt) || '' }}
-                     <span v-if="item.author"> · {{ item.author }}</span>
-                   </p>
-                  <p class="whitespace-pre-line text-sm text-muted leading-relaxed">{{ item.context }}</p>
+                    <p class="text-xs text-muted-dark"><span v-if="item.author">Por {{ item.author }} · </span>{{ formatDate(item.createdAt) || '' }}</p>
+                   <p class="post-excerpt whitespace-pre-line text-sm text-muted leading-relaxed">{{ item.context }}</p>
 
                   <div class="flex flex-wrap items-center gap-2 mt-2">
                     <button
@@ -1000,7 +1086,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                        class="btn-primary text-xs !px-3 !py-1.5"
                          @click="copyLink(item.link, item.id, item.title)"
                       >
-                         {{ copiedLinkId === item.id ? 'Título y enlace copiados' : 'Copiar título y enlace' }}
+                       {{ copiedLinkId === item.id ? 'Título y enlace copiados' : 'Copiar título y enlace' }}
                      </button>
 
                      <button
@@ -1017,6 +1103,8 @@ function formatDate(isoOrLocale: string | undefined): string {
                     >
                       Corrigeme
                     </button>
+
+                    <a v-if="item.link" :href="item.link" target="_blank" rel="noopener noreferrer" class="post-link">Ver publicación <span>→</span></a>
                   </div>
                 </div>
               </article>
@@ -1029,7 +1117,7 @@ function formatDate(isoOrLocale: string | undefined): string {
                 rel="noopener noreferrer"
                 class="btn-ghost text-sm"
               >
-                Abrir Burbuja Política en la web →
+                Abrir sitio <span>→</span>
               </a>
             </div>
           </template>
@@ -1149,8 +1237,8 @@ function formatDate(isoOrLocale: string | undefined): string {
 
         <!-- Footer -->
         <footer class="mt-8 text-center text-xs text-muted-dark">
-           <p>Cortana Monitor v2 &mdash; Monitor de publicaciones web</p>
-           <p class="mt-1">Los datos se almacenan en MongoDB.</p>
+            <p>Cortana Monitor <span>·</span> Monitoreo de publicaciones web</p>
+            <p class="mt-1">Los datos se almacenan de forma segura.</p>
         </footer>
       </main>
     </div>
