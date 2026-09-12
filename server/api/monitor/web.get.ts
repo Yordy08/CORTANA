@@ -1,5 +1,6 @@
 import { addNewPosts, deletePostsBefore, getStoredPosts } from '../../utils/storage'
 import * as cheerio from 'cheerio'
+import { createHash } from 'node:crypto'
 
 type WebItem = {
   id: string
@@ -129,41 +130,42 @@ function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
 }
 
 async function fetchWordPressCandidates(baseUrl: URL) {
-  const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
-  const { start, end } = getTodayWindowInColombia()
-  // Only request fields used by the monitor. The full embedded response is
-  // unnecessarily large and makes every refresh wait several seconds.
-  apiUrl.searchParams.set('per_page', '100')
-  // Ask WordPress directly for the complete Colombia calendar day instead of
-  // relying only on the number of posts returned by the first page.
-  apiUrl.searchParams.set('after', start.toISOString())
-  apiUrl.searchParams.set('before', end.toISOString())
-  // `_links` is required by WordPress for the requested embedded media to be
-  // included alongside `_embedded`.
-  apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
-  apiUrl.searchParams.set('_embed', '1')
-  const posts: WordPressPost[] = []
-  for (let page = 1; page <= 1000; page++) {
-    apiUrl.searchParams.set('page', String(page))
-    apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
-    const response = await fetch(apiUrl, {
-      headers: {
-        'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
-        accept: 'application/json',
-        'cache-control': 'no-cache',
-        pragma: 'no-cache'
-      },
-      signal: AbortSignal.timeout(8000)
-    })
+  try {
+    const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
+    const { start, end } = getTodayWindowInColombia()
+    // Only request fields used by the monitor. The full embedded response is
+    // unnecessarily large and makes every refresh wait several seconds.
+    apiUrl.searchParams.set('per_page', '100')
+    // Ask WordPress directly for the complete Colombia calendar day instead of
+    // relying only on the number of posts returned by the first page.
+    apiUrl.searchParams.set('after', start.toISOString())
+    apiUrl.searchParams.set('before', end.toISOString())
+    // `_links` is required by WordPress for the requested embedded media to be
+    // included alongside `_embedded`.
+    apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
+    apiUrl.searchParams.set('_embed', '1')
+    const posts: WordPressPost[] = []
+    for (let page = 1; page <= 1000; page++) {
+      apiUrl.searchParams.set('page', String(page))
+      apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
+      const response = await fetch(apiUrl, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
+          accept: 'application/json',
+          'cache-control': 'no-cache',
+          pragma: 'no-cache'
+        },
+        signal: AbortSignal.timeout(8000)
+      })
 
-    if (!response.ok) return []
-    const pagePosts = await response.json() as WordPressPost[]
-    posts.push(...pagePosts)
-    const totalPages = Number(response.headers.get('x-wp-totalpages') || 0)
-    if (pagePosts.length < 100 || (totalPages > 0 && page >= totalPages)) break
-  }
+      if (!response.ok) return []
+      const pagePosts = await response.json() as WordPressPost[]
+      posts.push(...pagePosts)
+      const totalPages = Number(response.headers.get('x-wp-totalpages') || 0)
+      if (pagePosts.length < 100 || (totalPages > 0 && page >= totalPages)) break
+    }
 
-  return posts.filter(isInsideTodayWindow).map((post) => {
+    return posts.filter(isInsideTodayWindow).map((post) => {
     const title = cleanText(post.title?.rendered)
     const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
     const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
@@ -179,7 +181,11 @@ async function fetchWordPressCandidates(baseUrl: URL) {
       date: post.date_gmt ? post.date_gmt + 'Z' : post.date,
       link: post.link || baseUrl.toString()
     }
-  }).filter((post) => post.text && post.link)
+    }).filter((post) => post.text && post.link)
+  } catch {
+    // The HTML scraper below is the fallback when REST is unavailable.
+    return []
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -200,9 +206,22 @@ export default defineEventHandler(async (event) => {
   let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
 
   const { year, month, day, hour } = getColombiaDateParts()
-  // Keep the previous calendar day until the 6:00 a. m. rollover.
-  const cleanupStart = new Date(Date.UTC(year, month, day, 11, 0, 0, 0))
-  await deletePostsBefore('web', cleanupStart)
+  // Keep the previous jornada during the overnight closure. It is removed
+  // only when the next 06:00 window starts.
+  const cleanupStart = new Date(Date.UTC(
+    year,
+    month,
+    day - (hour < 6 ? 1 : 0),
+    11,
+    0,
+    0,
+    0
+  ))
+  try {
+    await deletePostsBefore('web', cleanupStart)
+  } catch {
+    // Persistence must not prevent returning the live source.
+  }
 
   // Between 23:00 and 06:00 the current web day is closed and must appear empty.
   if (hour < 6 || hour >= 23) {
