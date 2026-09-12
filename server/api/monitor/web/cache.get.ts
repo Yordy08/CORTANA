@@ -1,4 +1,4 @@
-import { deletePostsBefore, getStoredPosts } from '../../../utils/storage'
+import { getStoredPosts } from '../../../utils/storage'
 
 type WebItem = {
   id: string
@@ -17,52 +17,20 @@ function isInsideTodayWindow(post: { date?: string; detectedAt?: string }, now =
   const timestamp = Date.parse(post.date || post.detectedAt || '')
   if (Number.isNaN(timestamp)) return false
 
-  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
-  const start = new Date(Date.UTC(
-    colombia.getUTCFullYear(),
-    colombia.getUTCMonth(),
-    colombia.getUTCDate(),
-    11,
-    0,
-    0,
-    0
-  ))
-  const end = new Date(Date.UTC(
-    colombia.getUTCFullYear(),
-    colombia.getUTCMonth(),
-    colombia.getUTCDate() + 1,
-    4,
-    0,
-    0,
-    0
-  ))
+  const dateKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now)
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const start = new Date(Date.UTC(year, month - 1, day, 5, 0, 0, 0))
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 5, 0, 0, 0))
   return timestamp >= start.getTime() && timestamp < end.getTime()
 }
 
 export default defineEventHandler(async () => {
   const now = new Date()
-  const colombia = new Date(now.getTime() - 5 * 60 * 60 * 1000)
-  const colombiaHour = colombia.getUTCHours()
-  // Clear the previous web day at the start of the new 06:00-23:00 window.
-  const cleanupStart = new Date(Date.UTC(
-    colombia.getUTCFullYear(),
-    colombia.getUTCMonth(),
-    colombia.getUTCDate() - (colombiaHour < 6 ? 1 : 0),
-    11,
-    0,
-    0,
-    0
-  ))
-  await deletePostsBefore('web', cleanupStart)
-  if (colombiaHour < 6 || colombiaHour >= 23) {
-    return {
-      items: [],
-      source: 'web-cache',
-      totalStored: 0,
-      newDetected: 0,
-      message: 'La jornada web está cerrada. Comienza nuevamente a las 6:00 a. m.'
-    }
-  }
   const posts = (await getStoredPosts('web'))
     .filter((post) => isInsideTodayWindow(post, now))
     .sort((a, b) => {

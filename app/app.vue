@@ -6,6 +6,7 @@ type MonitorItem = {
   category?: string
   fullText?: string
   leadText?: string
+  author?: string
   image?: string
   link?: string
   createdAt?: string
@@ -988,8 +989,9 @@ function formatDate(isoOrLocale: string | undefined): string {
                      ✔️ | Publicado en X
                    </p>
                    <p class="text-xs text-muted-dark">
-                    {{ formatDate(item.createdAt) || '' }}
-                  </p>
+                     {{ formatDate(item.createdAt) || '' }}
+                     <span v-if="item.author"> · {{ item.author }}</span>
+                   </p>
                   <p class="whitespace-pre-line text-sm text-muted leading-relaxed">{{ item.context }}</p>
 
                   <div class="flex flex-wrap items-center gap-2 mt-2">

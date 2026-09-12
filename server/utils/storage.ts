@@ -9,6 +9,7 @@ export interface ScrapedPost {
   text: string
   fullText?: string
   leadText?: string
+  author?: string
   category?: string
   date?: string
   link: string
@@ -50,9 +51,18 @@ async function postsCollection() {
   if (!collectionPromise) {
     collectionPromise = (async () => {
       const collection = (await getDatabase()).collection<ScrapedPost>(COLLECTION)
+      // Replace the old non-unique link index left by earlier deployments.
+      await collection.dropIndex('source_1_link_1').catch(() => undefined)
       await Promise.all([
         collection.createIndex({ source: 1, detectedAt: -1 }),
-        collection.createIndex({ source: 1, link: 1 })
+        collection.createIndex(
+          { source: 1, link: 1 },
+          {
+            name: 'unique_source_link',
+            unique: true,
+            partialFilterExpression: { link: { $type: 'string', $gt: '' } }
+          }
+        )
       ])
       return collection
     })().catch((error) => {
@@ -84,6 +94,7 @@ export async function addNewPosts(candidates: Array<{
   text: string
   fullText?: string
   leadText?: string
+  author?: string
   category?: string
   date?: string
   link: string
@@ -106,6 +117,7 @@ export async function addNewPosts(candidates: Array<{
       if (candidate.title && candidate.title !== existing.title) updates.title = candidate.title
       if (candidate.fullText && candidate.fullText !== existing.fullText) updates.fullText = candidate.fullText
       if (candidate.leadText && candidate.leadText !== existing.leadText) updates.leadText = candidate.leadText
+      if (candidate.author && candidate.author !== existing.author) updates.author = candidate.author
       if (candidate.category && candidate.category !== existing.category) updates.category = candidate.category
       if (candidate.image && candidate.image !== existing.image) updates.image = candidate.image
       if (candidate.date && candidate.date !== existing.date) updates.date = candidate.date
@@ -124,6 +136,7 @@ export async function addNewPosts(candidates: Array<{
       text: candidate.text || '(Sin texto disponible)',
       fullText: candidate.fullText,
       leadText: candidate.leadText,
+      author: candidate.author,
       category: candidate.category,
       date: candidate.date,
       link: candidate.link || '',

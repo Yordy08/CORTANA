@@ -1,4 +1,4 @@
-import { addNewPosts, deletePostsBefore, getStoredPosts } from '../../utils/storage'
+import { addNewPosts, getStoredPosts } from '../../utils/storage'
 import * as cheerio from 'cheerio'
 import { createHash } from 'node:crypto'
 
@@ -8,6 +8,7 @@ type WebItem = {
   context: string
   fullText?: string
   leadText?: string
+  author?: string
   category?: string
   image?: string
   link?: string
@@ -32,6 +33,7 @@ type WordPressPost = {
       name?: string
       taxonomy?: string
     }>>
+    author?: Array<{ name?: string }>
   }
 }
 
@@ -102,50 +104,51 @@ function getFirstParagraph(html = '') {
   return paragraph || cleanText(html).slice(0, 320)
 }
 
-function getColombiaDateParts(date = new Date()) {
-  const colombiaTime = new Date(date.getTime() - 5 * 60 * 60 * 1000)
-  return {
-    year: colombiaTime.getUTCFullYear(),
-    month: colombiaTime.getUTCMonth(),
-    day: colombiaTime.getUTCDate(),
-    hour: colombiaTime.getUTCHours()
-  }
+function getColombiaDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
 }
 
 function getTodayWindowInColombia(now = new Date()) {
-  const { year, month, day } = getColombiaDateParts(now)
+  const dateKey = getColombiaDateKey(now)
+  const [year, month, day] = dateKey.split('-').map(Number)
   return {
-    // The web monitor runs from 06:00 to 23:00 in Colombia.
-    start: new Date(Date.UTC(year, month, day, 11, 0, 0, 0)),
-    end: new Date(Date.UTC(year, month, day + 1, 4, 0, 0, 0))
+    dateKey,
+    start: new Date(Date.UTC(year, month - 1, day, 5, 0, 0, 0)),
+    end: new Date(Date.UTC(year, month - 1, day + 1, 5, 0, 0, 0))
   }
 }
 
-function isInsideTodayWindow(post: { detectedAt?: string; date?: string }) {
-  const timestamp = Date.parse(post.date || post.detectedAt || '')
+function isInsideTodayWindow(post: { detectedAt?: string; date?: string; date_gmt?: string }) {
+  const timestamp = Date.parse(post.date_gmt ? `${post.date_gmt}Z` : post.date || post.detectedAt || '')
   if (Number.isNaN(timestamp)) return false
 
   const { start, end } = getTodayWindowInColombia()
   return timestamp >= start.getTime() && timestamp < end.getTime()
 }
 
+function getWordPressDate(post: WordPressPost) {
+  return post.date_gmt ? `${post.date_gmt}Z` : post.date
+}
+
 async function fetchWordPressCandidates(baseUrl: URL) {
   try {
     const apiUrl = new URL('/wp-json/wp/v2/posts', baseUrl)
-    const { start, end } = getTodayWindowInColombia()
+    const { dateKey } = getTodayWindowInColombia()
     // Only request fields used by the monitor. The full embedded response is
     // unnecessarily large and makes every refresh wait several seconds.
     apiUrl.searchParams.set('per_page', '100')
-    // Ask WordPress directly for the complete Colombia calendar day instead of
-    // relying only on the number of posts returned by the first page.
-    apiUrl.searchParams.set('after', start.toISOString())
-    apiUrl.searchParams.set('before', end.toISOString())
     // `_links` is required by WordPress for the requested embedded media to be
     // included alongside `_embedded`.
     apiUrl.searchParams.set('_fields', 'id,date,date_gmt,link,title,excerpt,content,_embedded,_links')
     apiUrl.searchParams.set('_embed', '1')
     const posts: WordPressPost[] = []
-    for (let page = 1; page <= 1000; page++) {
+    for (let page = 1; page <= 20; page++) {
+      console.log(`[REVIEW] Consultando página ${page}`)
       apiUrl.searchParams.set('page', String(page))
       apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
       const response = await fetch(apiUrl, {
@@ -162,33 +165,40 @@ async function fetchWordPressCandidates(baseUrl: URL) {
       const pagePosts = await response.json() as WordPressPost[]
       posts.push(...pagePosts)
       const totalPages = Number(response.headers.get('x-wp-totalpages') || 0)
-      if (pagePosts.length < 100 || (totalPages > 0 && page >= totalPages)) break
+      const reachedPreviousDay = pagePosts.some((post) => {
+        const publishedAt = getWordPressDate(post)
+        return publishedAt && getColombiaDateKey(new Date(publishedAt)) < dateKey
+      })
+      if (!pagePosts.length || reachedPreviousDay || pagePosts.length < 100 || (totalPages > 0 && page >= Math.min(totalPages, 20))) break
     }
 
     return posts.filter(isInsideTodayWindow).map((post) => {
-    const title = cleanText(post.title?.rendered)
-    const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
-    const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
-    const leadText = getFirstParagraph(post.content?.rendered || post.excerpt?.rendered)
+      const title = cleanText(post.title?.rendered)
+      const excerpt = cleanText(post.excerpt?.rendered || post.content?.rendered).slice(0, 280)
+      const fullText = cleanText(post.content?.rendered || post.excerpt?.rendered)
+      const leadText = getFirstParagraph(post.content?.rendered || post.excerpt?.rendered)
 
-    return {
-      title,
-      image: getWordPressImage(post),
-      text: title ? `${title}: ${excerpt || 'Sin descripción disponible.'}` : excerpt,
-      fullText: title ? `${title}: ${fullText || excerpt || 'Sin descripción disponible.'}` : fullText || excerpt,
-      leadText,
-      category: getWordPressCategory(post),
-      date: post.date_gmt ? post.date_gmt + 'Z' : post.date,
-      link: post.link || baseUrl.toString()
-    }
+      return {
+        title,
+        image: getWordPressImage(post),
+        text: title ? `${title}: ${excerpt || 'Sin descripción disponible.'}` : excerpt,
+        fullText: title ? `${title}: ${fullText || excerpt || 'Sin descripción disponible.'}` : fullText || excerpt,
+        leadText,
+        author: post._embedded?.author?.[0]?.name,
+        category: getWordPressCategory(post),
+        date: getWordPressDate(post),
+        link: post.link || baseUrl.toString()
+      }
     }).filter((post) => post.text && post.link)
-  } catch {
+  } catch (error) {
     // The HTML scraper below is the fallback when REST is unavailable.
+    console.error('[REVIEW ERROR] REST de WordPress no disponible', error)
     return []
   }
 }
 
 export default defineEventHandler(async (event) => {
+  console.log('[REVIEW] Iniciando revisión')
   const query = getQuery(event)
   const targetUrl = String(query.url || '').trim()
 
@@ -203,36 +213,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El link de la web no es válido.' })
   }
 
-  let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
-
-  const { year, month, day, hour } = getColombiaDateParts()
-  // Keep the previous jornada during the overnight closure. It is removed
-  // only when the next 06:00 window starts.
-  const cleanupStart = new Date(Date.UTC(
-    year,
-    month,
-    day - (hour < 6 ? 1 : 0),
-    11,
-    0,
-    0,
-    0
-  ))
-  try {
-    await deletePostsBefore('web', cleanupStart)
-  } catch {
-    // Persistence must not prevent returning the live source.
-  }
-
-  // Between 23:00 and 06:00 the current web day is closed and must appear empty.
-  if (hour < 6 || hour >= 23) {
-    return {
-      items: [],
-      source: 'web',
-      totalStored: 0,
-      newDetected: 0,
-      message: 'La jornada web está cerrada. Comienza nuevamente a las 6:00 a. m.'
-    }
-  }
+  const { dateKey } = getTodayWindowInColombia()
+  console.log(`[REVIEW] Fecha Colombia: ${dateKey}`)
+  let candidates: Array<{ title?: string; image?: string; text: string; fullText?: string; leadText?: string; author?: string; category?: string; date?: string; link: string }> = await fetchWordPressCandidates(parsedUrl)
 
   if (candidates.length === 0) {
     const response = await fetch(parsedUrl.toString(), {
@@ -299,6 +282,7 @@ export default defineEventHandler(async (event) => {
     seen.add(key)
     return true
   })
+  console.log(`[REVIEW] Publicaciones encontradas: ${uniqueCandidates.length}`)
   const categoryByLink = new Map(uniqueCandidates.map((candidate) => [candidate.link, candidate.category]))
 
   // MongoDB is persistent, but it must not prevent a live response when it is
@@ -309,9 +293,15 @@ export default defineEventHandler(async (event) => {
   try {
     newPosts = await addNewPosts(uniqueCandidates, 'web')
     allPosts = await getStoredPosts('web')
-  } catch {
+  } catch (error) {
     storageAvailable = false
+    console.error('[REVIEW ERROR] No fue posible guardar o leer MongoDB', error)
   }
+
+  const existingCount = Math.max(uniqueCandidates.length - newPosts.length, 0)
+  console.log(`[REVIEW] Nuevas: ${newPosts.length}`)
+  console.log(`[REVIEW] Existentes: ${existingCount}`)
+  console.log('[REVIEW] Revisión finalizada')
 
   const currentKeys = new Set(uniqueCandidates.map((candidate) => candidate.link || candidate.text.slice(0, 80)))
   const recentPosts = allPosts
@@ -327,8 +317,9 @@ export default defineEventHandler(async (event) => {
       id: post.id,
       title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
       context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
-      fullText: post.fullText || post.text,
-      leadText: post.leadText,
+       fullText: post.fullText || post.text,
+       leadText: post.leadText,
+       author: post.author,
       category: post.category || categoryByLink.get(post.link),
       image: post.image,
       link: post.link,
@@ -339,8 +330,9 @@ export default defineEventHandler(async (event) => {
       id: `web-live-${createHash('sha1').update(post.link || post.text || String(index)).digest('hex')}`,
       title: post.title || post.text.split(':')[0]?.trim() || post.text.slice(0, 60),
       context: post.text.includes(':') ? post.text.split(':').slice(1).join(':').trim().slice(0, 260) : post.text.slice(0, 260),
-      fullText: post.fullText || post.text,
-      leadText: post.leadText,
+       fullText: post.fullText || post.text,
+       leadText: post.leadText,
+       author: post.author,
       category: post.category,
       image: post.image,
       link: post.link,
@@ -353,8 +345,11 @@ export default defineEventHandler(async (event) => {
     source: 'web',
     totalStored: items.length,
     newDetected: newPosts.length,
+    found: uniqueCandidates.length,
+    existing: existingCount,
+    date: dateKey,
     message: newPosts.length > 0
-      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s) en la web. Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
-       : `Mostrando ${items.length} publicación(es) de hoy entre 6:00 a. m. y 11:00 p. m.`
+      ? `Se detectaron ${newPosts.length} publicación(es) nueva(s). Mostrando ${items.length} publicación(es) de hoy.`
+       : `Mostrando ${items.length} publicación(es) de hoy.`
   }
 })
