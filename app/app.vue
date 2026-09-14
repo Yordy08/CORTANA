@@ -167,10 +167,13 @@ async function measureConnection() {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), 4500)
   try {
-    await fetch('/api/connection-check', {
+    // Measure the same-origin deployment without depending on an API route that
+    // may be protected by Vercel's edge rules in some environments. The icon
+    // is a tiny static resource and does not download publication data.
+    await fetch('/icon.svg', {
       cache: 'no-store',
       signal: controller.signal,
-      headers: { accept: 'text/plain' }
+      headers: { accept: 'image/svg+xml' }
     })
     const latency = Math.round(performance.now() - startedAt)
     const networkInformation = (navigator as Navigator & { connection?: { effectiveType?: string; rtt?: number } }).connection
