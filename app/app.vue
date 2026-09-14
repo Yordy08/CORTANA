@@ -86,8 +86,134 @@ const suggestMode = ref<'choose' | 'error' | 'category'>('choose')
 const postFilter = ref<'all' | 'new'>('all')
 const loadingPhase = ref('Consultando Burbujapolitica.com...')
 const toast = ref<{ title: string; body: string } | null>(null)
+type ConnectionQuality = 'Excelente' | 'Buena' | 'Regular' | 'Baja' | 'Sin conexión'
+const connectionQuality = ref<ConnectionQuality>('Regular')
+const connectionLatency = ref<number | null>(null)
+const connectionMessage = computed(() => connectionQuality.value === 'Sin conexión'
+  ? 'Sin conexión. Mostrando publicaciones almacenadas.'
+  : `Conexión ${connectionQuality.value.toLowerCase()} · Latencia con Cortana: ${connectionLatency.value === null ? 'midiendo' : `${connectionLatency.value} ms`}`)
 let loadingPhaseTimer: ReturnType<typeof setInterval> | null = null
 let toastTimer: ReturnType<typeof setTimeout> | null = null
+let connectionInterval: ReturnType<typeof setInterval> | null = null
+let auxiliaryInterval: ReturnType<typeof setInterval> | null = null
+let lastWebRequestAt = 0
+let lastAuxiliaryPollAt = 0
+let candidateQuality: ConnectionQuality | null = null
+let candidateQualityCount = 0
+
+const LOCAL_POST_CACHE_DB = 'cortana-monitor-cache'
+const LOCAL_POST_CACHE_STORE = 'posts'
+const LOCAL_POST_CACHE_MAX_AGE = 36 * 60 * 60 * 1000
+
+function openLocalPostCache(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(LOCAL_POST_CACHE_DB, 1)
+    request.onupgradeneeded = () => request.result.createObjectStore(LOCAL_POST_CACHE_STORE)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function saveLocalPosts(source: 'web' | 'facebook', items: MonitorItem[]) {
+  try {
+    const database = await openLocalPostCache()
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(LOCAL_POST_CACHE_STORE, 'readwrite')
+      transaction.objectStore(LOCAL_POST_CACHE_STORE).put({ items, savedAt: Date.now() }, source)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
+  } catch {
+    // IndexedDB is an optimization; the server cache remains available.
+  }
+}
+
+async function readLocalPosts(source: 'web' | 'facebook') {
+  try {
+    const database = await openLocalPostCache()
+    const value = await new Promise<{ items?: MonitorItem[]; savedAt?: number } | undefined>((resolve, reject) => {
+      const request = database.transaction(LOCAL_POST_CACHE_STORE).objectStore(LOCAL_POST_CACHE_STORE).get(source)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    database.close()
+    if (!value?.items?.length || !value.savedAt || Date.now() - value.savedAt > LOCAL_POST_CACHE_MAX_AGE) return null
+    return value.items
+  } catch {
+    return null
+  }
+}
+
+function classifyConnection(latency: number, networkInformation?: { effectiveType?: string; rtt?: number }) {
+  const effectiveType = networkInformation?.effectiveType
+  if (effectiveType === 'slow-2g' || effectiveType === '2g') return 'Baja' as const
+  if (latency < 150) return 'Excelente' as const
+  if (latency < 400) return 'Buena' as const
+  if (latency < 1000) return 'Regular' as const
+  return 'Baja' as const
+}
+
+async function measureConnection() {
+  if (!navigator.onLine) {
+    connectionQuality.value = 'Sin conexión'
+    connectionLatency.value = null
+    candidateQuality = null
+    candidateQualityCount = 0
+    return
+  }
+
+  const startedAt = performance.now()
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 4500)
+  try {
+    await fetch('/api/connection-check', {
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { accept: 'text/plain' }
+    })
+    const latency = Math.round(performance.now() - startedAt)
+    const networkInformation = (navigator as Navigator & { connection?: { effectiveType?: string; rtt?: number } }).connection
+    const nextQuality = classifyConnection(latency, networkInformation)
+    connectionLatency.value = latency
+
+    if (nextQuality === connectionQuality.value || connectionQuality.value === 'Sin conexión') {
+      candidateQuality = nextQuality
+      candidateQualityCount = 0
+      connectionQuality.value = nextQuality
+    } else if (candidateQuality === nextQuality) {
+      candidateQualityCount += 1
+      if (candidateQualityCount >= 2) {
+        connectionQuality.value = nextQuality
+        candidateQualityCount = 0
+      }
+    } else {
+      candidateQuality = nextQuality
+      candidateQualityCount = 1
+    }
+  } catch {
+    connectionLatency.value = null
+    if (candidateQuality === 'Baja') {
+      candidateQualityCount += 1
+    } else {
+      candidateQuality = 'Baja'
+      candidateQualityCount = 1
+    }
+    if (candidateQualityCount >= 2 || connectionQuality.value === 'Sin conexión') {
+      connectionQuality.value = 'Baja'
+      candidateQualityCount = 0
+    }
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+function networkAllowsRequest(manual = false) {
+  if (!navigator.onLine || connectionQuality.value === 'Sin conexión') return false
+  if (!manual && connectionLatency.value === null) return false
+  if (!manual && connectionQuality.value === 'Baja') return false
+  return true
+}
 
 const loadingPhases = [
   'Consultando Burbujapolitica.com...',
@@ -268,12 +394,19 @@ async function applyCorrection(correctionId: string) {
 }
 
 // All monitor sources are refreshed in the background so the dashboard stays current.
-let correctionInterval: ReturnType<typeof setInterval> | null = null
-let publishedXInterval: ReturnType<typeof setInterval> | null = null
-let notificationInterval: ReturnType<typeof setInterval> | null = null
 const lastFacebookSyncAt = ref(0)
 
-onMounted(() => {
+function pollAuxiliary() {
+  if (!networkAllowsRequest()) return
+  const now = Date.now()
+  if (connectionQuality.value === 'Regular' && now - lastAuxiliaryPollAt < 60_000) return
+  lastAuxiliaryPollAt = now
+  fetchCorrections()
+  fetchPublishedX()
+  fetchNotifications()
+}
+
+onMounted(async () => {
   const savedUser = window.localStorage.getItem('cortana-user-id')
   if (savedUser === '1' || savedUser === '2') currentUser.value = savedUser
 
@@ -282,18 +415,27 @@ onMounted(() => {
     installPrompt.value = event
   })
 
-  // Show cached data immediately, then synchronize with the live web source.
+  window.addEventListener('offline', () => {
+    connectionQuality.value = 'Sin conexión'
+    connectionLatency.value = null
+  })
+  window.addEventListener('online', () => { measureConnection() })
+
+  // Show cached data immediately, then synchronize only when the connection allows it.
   loadCachedPosts()
-  refreshAll(true)
-  fetchCorrections()
-  correctionInterval = setInterval(fetchCorrections, 3000)
-  fetchPublishedX()
-  publishedXInterval = setInterval(fetchPublishedX, 3000)
-  fetchNotifications()
-  notificationInterval = setInterval(fetchNotifications, 3000)
+  await measureConnection()
+  if (networkAllowsRequest()) await refreshAll(true)
+  pollAuxiliary()
+  auxiliaryInterval = setInterval(pollAuxiliary, 15000)
+  connectionInterval = setInterval(measureConnection, 30000)
 })
 
 async function loadCachedPosts() {
+  const localItems = await readLocalPosts('web')
+  if (localItems?.length && !websiteItems.value.length) websiteItems.value = localItems
+
+  if (!navigator.onLine) return
+
   try {
     const webCache = await $fetch<MonitorResponse>('/api/monitor/web/cache')
 
@@ -307,9 +449,8 @@ async function loadCachedPosts() {
 }
 
 onUnmounted(() => {
-  if (correctionInterval) clearInterval(correctionInterval)
-  if (publishedXInterval) clearInterval(publishedXInterval)
-  if (notificationInterval) clearInterval(notificationInterval)
+  if (auxiliaryInterval) clearInterval(auxiliaryInterval)
+  if (connectionInterval) clearInterval(connectionInterval)
   if (loadingPhaseTimer) clearInterval(loadingPhaseTimer)
   if (toastTimer) clearTimeout(toastTimer)
 })
@@ -404,6 +545,10 @@ async function refreshActiveView(silent = false) {
 
 async function refreshAll(silent = false) {
   if (syncing.value) return
+  if (!networkAllowsRequest(true)) {
+    message.value = connectionMessage.value
+    return
+  }
 
   syncing.value = true
   startReviewVisuals()
@@ -550,6 +695,7 @@ function handleImageError(event: Event, originalImage = '') {
 }
 
 async function loadFacebookPosts(silent = false) {
+  if (!networkAllowsRequest(!silent)) return
   if (!silent) loading.value = true
 
   try {
@@ -559,6 +705,7 @@ async function loadFacebookPosts(silent = false) {
     })
 
     facebookItems.value = response.items || []
+    await saveLocalPosts('facebook', facebookItems.value)
 
     lastFacebookSyncAt.value = Date.now()
 
@@ -584,6 +731,18 @@ async function loadFacebookPosts(silent = false) {
 }
 
 async function loadWebsitePosts(silent = false) {
+  if (!networkAllowsRequest(!silent)) {
+    if (!silent) message.value = connectionMessage.value
+    return
+  }
+
+  // A manual click immediately after a completed review should reuse its result.
+  if (Date.now() - lastWebRequestAt < 15_000 && websiteItems.value.length) {
+    if (!silent) message.value = 'La revisión reciente sigue vigente. Mostrando datos almacenados.'
+    return
+  }
+
+  lastWebRequestAt = Date.now()
   if (!silent) loading.value = true
 
   try {
@@ -601,6 +760,7 @@ async function loadWebsitePosts(silent = false) {
     if (receivedItems.length || !websiteItems.value.length || webDayClosed) {
       websiteItems.value = receivedItems
     }
+    await saveLocalPosts('web', websiteItems.value)
 
     message.value = response.message || ''
 
@@ -837,7 +997,7 @@ function formatTime(isoOrLocale: string | undefined): string {
          <!-- Status Bar -->
          <div class="status-strip mb-6">
            <span class="status-strip-item"><span class="status-dot" /> {{ syncing ? 'Sincronizando...' : 'Sistema activo' }}</span>
-           <span class="status-strip-item"><span class="status-dot status-dot-blue" /> Conectado · Burbujapolitica.com</span>
+           <span class="status-strip-item" :title="connectionQuality === 'Sin conexión' ? 'No se realizan solicitudes mientras no haya conexión.' : 'Latencia medida únicamente contra el servidor de Cortana.'"><span class="status-dot" :class="connectionQuality === 'Sin conexión' ? 'status-dot-red' : 'status-dot-blue'" /> {{ connectionQuality }} · Cortana</span>
            <span class="status-strip-item status-strip-muted">Publicaciones web: {{ websiteItems.length }}</span>
            <span class="status-strip-item status-strip-muted">Publicadas en X hoy: {{ dailyPublishedXCount }}</span>
            <span v-if="newCount > 0" class="badge-new">
@@ -924,6 +1084,7 @@ function formatTime(isoOrLocale: string | undefined): string {
                     :src="imageUrl(item.image)"
                     :alt="item.mediaType === 'video' ? 'Miniatura de video' : 'Imagen de publicación'"
                     loading="lazy"
+                    decoding="async"
                     @error="handleImageError($event, item.image)"
                   >
                   <div v-if="item.mediaType === 'video'" class="video-overlay">
@@ -1034,6 +1195,7 @@ function formatTime(isoOrLocale: string | undefined): string {
                     :src="imageUrl(item.image)"
                     alt="Imagen de publicación web"
                     loading="lazy"
+                    decoding="async"
                     @error="handleImageError($event, item.image)"
                   >
                   <span v-if="item.category" class="category-pill category-pill-floating">{{ item.category }}</span>

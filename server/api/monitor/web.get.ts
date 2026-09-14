@@ -1,4 +1,5 @@
 import { addNewPosts, getStoredPosts } from '../../utils/storage'
+import { getWordPressPageCache, setWordPressPageCache } from '../../utils/wpCache'
 import * as cheerio from 'cheerio'
 import { createHash } from 'node:crypto'
 
@@ -75,8 +76,8 @@ function resolveUrl(value: string | undefined, baseUrl: string): string | undefi
 
 function getWordPressImage(post: WordPressPost): string | undefined {
   const media = post._embedded?.['wp:featuredmedia']?.[0]
-  const featuredImage = media?.media_details?.sizes?.large?.source_url
-    || media?.media_details?.sizes?.medium_large?.source_url
+  const featuredImage = media?.media_details?.sizes?.medium_large?.source_url
+    || media?.media_details?.sizes?.large?.source_url
     || media?.media_details?.sizes?.medium?.source_url
     || media?.source_url
   if (featuredImage) return featuredImage
@@ -150,19 +151,48 @@ async function fetchWordPressCandidates(baseUrl: URL) {
     for (let page = 1; page <= 20; page++) {
       console.log(`[REVIEW] Consultando página ${page}`)
       apiUrl.searchParams.set('page', String(page))
-      apiUrl.searchParams.set('_cortana_refresh', Date.now().toString())
+      const cacheKey = apiUrl.toString()
+      const cachedPage = getWordPressPageCache<WordPressPost[]>(cacheKey)
+
+      if (cachedPage && cachedPage.expiresAt > Date.now()) {
+        posts.push(...cachedPage.body)
+        const reachedPreviousDay = cachedPage.body.some((post) => {
+          const publishedAt = getWordPressDate(post)
+          return publishedAt && getColombiaDateKey(new Date(publishedAt)) < dateKey
+        })
+        if (!cachedPage.body.length || reachedPreviousDay || cachedPage.body.length < 100) break
+        continue
+      }
+
+      const conditionalHeaders: Record<string, string> = {
+        'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
+        accept: 'application/json'
+      }
+      if (cachedPage?.etag) conditionalHeaders['if-none-match'] = cachedPage.etag
+      if (cachedPage?.lastModified) conditionalHeaders['if-modified-since'] = cachedPage.lastModified
       const response = await fetch(apiUrl, {
-        headers: {
-          'user-agent': 'Mozilla/5.0 CortanaMonitor/2.0',
-          accept: 'application/json',
-          'cache-control': 'no-cache',
-          pragma: 'no-cache'
-        },
+        headers: conditionalHeaders,
         signal: AbortSignal.timeout(8000)
       })
 
+      if (response.status === 304 && cachedPage) {
+        setWordPressPageCache(cacheKey, cachedPage)
+        posts.push(...cachedPage.body)
+        const reachedPreviousDay = cachedPage.body.some((post) => {
+          const publishedAt = getWordPressDate(post)
+          return publishedAt && getColombiaDateKey(new Date(publishedAt)) < dateKey
+        })
+        if (!cachedPage.body.length || reachedPreviousDay || cachedPage.body.length < 100) break
+        continue
+      }
       if (!response.ok) return []
       const pagePosts = await response.json() as WordPressPost[]
+      setWordPressPageCache(cacheKey, {
+        body: pagePosts,
+        etag: response.headers.get('etag') || undefined,
+        lastModified: response.headers.get('last-modified') || undefined,
+        totalPages: response.headers.get('x-wp-totalpages') || undefined
+      })
       posts.push(...pagePosts)
       const totalPages = Number(response.headers.get('x-wp-totalpages') || 0)
       const reachedPreviousDay = pagePosts.some((post) => {
